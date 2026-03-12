@@ -719,7 +719,7 @@ function updateEngineSound(speed, maxSpeed) {
     let ratio = Math.abs(speed) / maxSpeed;
     let t = audioCtx.currentTime;
     engineOsc.frequency.setTargetAtTime(90 + ratio * 180, t, 0.05);
-    engineGain.gain.setTargetAtTime(Math.min(0.18, ratio * 0.22), t, 0.05);
+    engineGain.gain.setTargetAtTime(Math.min(0.20, ratio * 0.22), t, 0.05); // Increased max volume for 220 max speed
     if (windGain) {
         windGain.gain.setTargetAtTime(Math.min(0.012, ratio * ratio * 0.015), t, 0.05);
     }
@@ -860,7 +860,7 @@ function playWallSound() {
 function playBrakeSound(intensity) {
     if (!audioCtx || !brakeGain) return;
     let now = audioCtx.currentTime;
-    let targetGain = Math.min(0.02, intensity * 0.03);
+    let targetGain = Math.min(0.01, intensity * 0.02); // Reduced brake sound volume
     brakeGain.gain.setTargetAtTime(targetGain, now, 0.05);
 }
 
@@ -1664,26 +1664,9 @@ function generateScenery() {
         }
     }
 
-    // Calculate finish line position and empty area distance
-    let finishLineIdx = trackPath.length - 1;
-    let finishLinePos = trackPath[finishLineIdx];
-    let maxEmptyAreaDistance = TRACK_WIDTH * 2; // Empty area should not exceed twice the track width
-    let treeBorderDistance = maxEmptyAreaDistance + 50; // Tree border extends 50 units beyond empty area
-    
     // Second pass: generate trees and people, avoiding lakes
     for (let i = 0; i < trackPath.length; i += step) {
         let p = trackPath[i];
-        
-        // Calculate distance from current point to finish line
-        let dx = p.x - finishLinePos.x;
-        let dy = p.y - finishLinePos.y;
-        let distToFinish = Math.sqrt(dx * dx + dy * dy);
-        
-        // Check if this is near the finish line (within treeBorderDistance) but not in the empty area
-        let isNearFinish = distToFinish <= treeBorderDistance && distToFinish > maxEmptyAreaDistance;
-        // Check if this is the finish area that should be empty (within maxEmptyAreaDistance)
-        let isFinishEmptyArea = distToFinish <= maxEmptyAreaDistance;
-        
         for (let side = -1; side <= 1; side += 2) {
             if (Math.random() < 0.02) continue;
             let offsetDist = TRACK_WIDTH / 2 + randRange(40, 320);
@@ -1697,28 +1680,15 @@ function generateScenery() {
             let distToTrack = Math.abs(getTrackDistance(sx, sy, closestPt.index));
             if (distToTrack < TRACK_WIDTH / 2 + 15) continue;
 
-            // Calculate distance from this scenery point to finish line
-            let sceneryDx = sx - finishLinePos.x;
-            let sceneryDy = sy - finishLinePos.y;
-            let sceneryDistToFinish = Math.sqrt(sceneryDx * sceneryDx + sceneryDy * sceneryDy);
-            let isSceneryNearFinish = sceneryDistToFinish <= treeBorderDistance && sceneryDistToFinish > maxEmptyAreaDistance;
-            let isSceneryInEmptyArea = sceneryDistToFinish <= maxEmptyAreaDistance;
-
             let r = Math.random();
             if (r < 0.92) {
                 if (!isNearLake(sx, sy, 50)) {
-                    // Only generate trees if it's not the finish empty area
-                    if (!isSceneryInEmptyArea) {
-                        // Increase tree density near finish line to create a border
-                        if (isSceneryNearFinish || Math.random() < 0.5) {
-                            let shade = randRange(0.7, 1.0);
-                            sceneryItems.push({ type: 'tree', x: sx, y: sy, size: randRange(20, 40), shade: shade,
-                                cachedColor: 'rgba(46,' + Math.floor(139 * shade) + ',56,0.9)' });
-                        }
-                    }
+                    let shade = randRange(0.7, 1.0);
+                    sceneryItems.push({ type: 'tree', x: sx, y: sy, size: randRange(20, 40), shade: shade,
+                        cachedColor: 'rgba(46,' + Math.floor(139 * shade) + ',56,0.9)' });
                 }
             } else {
-                if (!isNearLake(sx, sy, 100) && !isSceneryInEmptyArea) {
+                if (!isNearLake(sx, sy, 100)) {
                     let count = randInt(4, 9);
                     let people = [];
                     for (let pp = 0; pp < count; pp++) {
@@ -1727,86 +1697,6 @@ function generateScenery() {
                     }
                     sceneryItems.push({ type: 'people', x: sx, y: sy, people: people });
                 }
-            }
-        }
-    }
-    
-    // Dedicated pass to create a dense tree border around the finish empty area
-    // Use random angles instead of fixed intervals for more natural look
-    for (let i = 0; i < 20; i++) { // 20 random points around the circle
-        let angle = Math.random() * Math.PI * 2;
-        let distance = maxEmptyAreaDistance + randRange(20, 40); // Random distance within border
-        let x = finishLinePos.x + Math.cos(angle) * distance;
-        let y = finishLinePos.y + Math.sin(angle) * distance;
-        
-        // Check if this position is not too close to the track
-        let closestPt = findClosestTrackPoint(x, y);
-        let distToTrack = Math.abs(getTrackDistance(x, y, closestPt.index));
-        if (distToTrack >= TRACK_WIDTH / 2 + 20) {
-            // Generate random number of trees at each point (1-4)
-            let treeCount = randInt(1, 4);
-            for (let j = 0; j < treeCount; j++) {
-                let offsetX = randRange(-20, 20);
-                let offsetY = randRange(-20, 20);
-                let treeX = x + offsetX;
-                let treeY = y + offsetY;
-                
-                // Check if not near lake
-                let nearLake = false;
-                for (let item of sceneryItems) {
-                    if (item.type === 'lake') {
-                        let dx = treeX - item.x;
-                        let dy = treeY - item.y;
-                        let dist = Math.sqrt(dx * dx + dy * dy);
-                        if (dist < 50) {
-                            nearLake = true;
-                            break;
-                        }
-                    }
-                }
-                
-                if (!nearLake) {
-                    let shade = randRange(0.7, 1.0);
-                    sceneryItems.push({ type: 'tree', x: treeX, y: treeY, size: randRange(20, 50), shade: shade,
-                        cachedColor: 'rgba(46,' + Math.floor(139 * shade) + ',56,0.9)' });
-                }
-            }
-        }
-    }
-    
-    // Add some people around the finish line, outside the empty area
-    for (let i = 0; i < 8; i++) { // 8 groups of people
-        let angle = Math.random() * Math.PI * 2;
-        let distance = maxEmptyAreaDistance + randRange(30, 60); // Outside empty area
-        let x = finishLinePos.x + Math.cos(angle) * distance;
-        let y = finishLinePos.y + Math.sin(angle) * distance;
-        
-        // Check if this position is not too close to the track
-        let closestPt = findClosestTrackPoint(x, y);
-        let distToTrack = Math.abs(getTrackDistance(x, y, closestPt.index));
-        if (distToTrack >= TRACK_WIDTH / 2 + 20) {
-            // Check if not near lake
-            let nearLake = false;
-            for (let item of sceneryItems) {
-                if (item.type === 'lake') {
-                    let dx = x - item.x;
-                    let dy = y - item.y;
-                    let dist = Math.sqrt(dx * dx + dy * dy);
-                    if (dist < 100) {
-                        nearLake = true;
-                        break;
-                    }
-                }
-            }
-            
-            if (!nearLake) {
-                let count = randInt(6, 12); // More people near finish line
-                let people = [];
-                for (let j = 0; j < count; j++) {
-                    people.push({ dx: randRange(-20, 20), dy: randRange(-20, 20),
-                        color: ['#e74c3c','#3498db','#2ecc71','#f1c40f','#9b59b6','#e67e22','#1abc9c'][randInt(0,6)] });
-                }
-                sceneryItems.push({ type: 'people', x: x, y: y, people: people });
             }
         }
     }
@@ -1823,6 +1713,190 @@ function generateScenery() {
         safeItems.push(item);
     }
     sceneryItems = safeItems;
+
+    // Add extra people near start and finish lines
+    const startFinishRange = 150; // distance in meters
+    const startIdx = 0;
+    const finishIdx = trackPath.length - 1;
+
+    // Start line area
+    for (let i = Math.max(0, startIdx - 5); i <= Math.min(trackPath.length - 1, startIdx + 5); i++) {
+        let p = trackPath[i];
+        for (let side = -1; side <= 1; side += 2) {
+            if (Math.random() < 0.3) continue;
+            let offsetDist = TRACK_WIDTH / 2 + randRange(60, 200);
+            let sx = p.x + p.nx * offsetDist * side;
+            let sy = p.y + p.ny * offsetDist * side;
+
+            if (isNearBranch(sx, sy, 80)) continue;
+            if (isInSelfIntersectionZone(sx, sy, 2)) continue;
+
+            let closestPt = findClosestTrackPoint(sx, sy);
+            let distToTrack = Math.abs(getTrackDistance(sx, sy, closestPt.index));
+            if (distToTrack < TRACK_WIDTH / 2 + 15) continue;
+
+            if (!isNearLake(sx, sy, 100)) {
+                let count = randInt(6, 12);
+                let people = [];
+                for (let pp = 0; pp < count; pp++) {
+                    people.push({ dx: randRange(-25, 25), dy: randRange(-25, 25),
+                        color: ['#e74c3c','#3498db','#2ecc71','#f1c40f','#9b59b6','#e67e22','#1abc9c'][randInt(0,6)] });
+                }
+                sceneryItems.push({ type: 'people', x: sx, y: sy, people: people });
+            }
+        }
+    }
+
+    // Finish line area
+    for (let i = Math.max(0, finishIdx - 5); i <= Math.min(trackPath.length - 1, finishIdx + 5); i++) {
+        let p = trackPath[i];
+        for (let side = -1; side <= 1; side += 2) {
+            if (Math.random() < 0.3) continue;
+            let offsetDist = TRACK_WIDTH / 2 + randRange(60, 200);
+            let sx = p.x + p.nx * offsetDist * side;
+            let sy = p.y + p.ny * offsetDist * side;
+
+            if (isNearBranch(sx, sy, 80)) continue;
+            if (isInSelfIntersectionZone(sx, sy, 2)) continue;
+
+            let closestPt = findClosestTrackPoint(sx, sy);
+            let distToTrack = Math.abs(getTrackDistance(sx, sy, closestPt.index));
+            if (distToTrack < TRACK_WIDTH / 2 + 15) continue;
+
+            if (!isNearLake(sx, sy, 100)) {
+                let count = randInt(6, 12);
+                let people = [];
+                for (let pp = 0; pp < count; pp++) {
+                    people.push({ dx: randRange(-25, 25), dy: randRange(-25, 25),
+                        color: ['#e74c3c','#3498db','#2ecc71','#f1c40f','#9b59b6','#e67e22','#1abc9c'][randInt(0,6)] });
+                }
+                sceneryItems.push({ type: 'people', x: sx, y: sy, people: people });
+            }
+        }
+    }
+
+    // Add trees outside start and finish lines (beyond the track)
+    // Start line outer trees - before the start line in a circular arc
+    let startP = trackPath[startIdx];
+    let startDir = startP.dir;
+    
+    // Circular arc around start line
+    const startArcRadius = 250;
+    const startTreeCount = 18;
+    
+    for (let i = 0; i < startTreeCount; i++) {
+        // Calculate angle for circular distribution
+        let angleOffset = (i / startTreeCount) * Math.PI * 1.5 - Math.PI * 0.75; // 135-degree arc
+        let angle = startDir + Math.PI + angleOffset; // Opposite direction of track
+        
+        let distance = startArcRadius + randRange(-50, 50); // Slight variation in distance
+        let sx = startP.x + Math.cos(angle) * distance;
+        let sy = startP.y + Math.sin(angle) * distance;
+        
+        // Ensure trees are outside track
+        let closest = findClosestTrackPoint(sx, sy);
+        let distToTrack = Math.abs(getTrackDistance(sx, sy, closest.index));
+        if (distToTrack < TRACK_WIDTH / 2 + 30) continue; // Keep trees outside track
+        
+        // Skip if tree would overlap with road
+        if (distToTrack < TRACK_WIDTH / 2 + 40) continue;
+        
+        let shade = randRange(0.7, 1.0);
+        let size = randRange(25, 50);
+        sceneryItems.push({ type: 'tree', x: sx, y: sy, size: size, shade: shade,
+            cachedColor: 'rgba(46,' + Math.floor(139 * shade) + ',56,0.9)' });
+    }
+
+    // Finish line outer trees - beyond the finish line in a circular arc
+    let finishP = trackPath[finishIdx];
+    let finishDir = finishP.dir;
+    
+    // Circular arc around finish line (expanded)
+    const finishArcRadius = 400; // Increased radius to 400
+    const finishTreeCount = 24; // Increased tree count
+    
+    for (let i = 0; i < finishTreeCount; i++) {
+        // Calculate angle for circular distribution - expanded arc
+        let angleOffset = (i / finishTreeCount) * Math.PI * 2 - Math.PI; // 180-degree arc (semi-circle)
+        let angle = finishDir + angleOffset; // Same direction as track
+        
+        let distance = finishArcRadius + randRange(-100, 100); // More variation in distance
+        let sx = finishP.x + Math.cos(angle) * distance;
+        let sy = finishP.y + Math.sin(angle) * distance;
+        
+        // Ensure trees are outside track
+        let closest = findClosestTrackPoint(sx, sy);
+        let distToTrack = Math.abs(getTrackDistance(sx, sy, closest.index));
+        if (distToTrack < TRACK_WIDTH / 2 + 50) continue; // Keep trees further outside track
+        
+        // Skip if tree would overlap with road
+        if (distToTrack < TRACK_WIDTH / 2 + 60) continue;
+        
+        let shade = randRange(0.7, 1.0);
+        let size = randRange(25, 55); // Slightly larger trees
+        sceneryItems.push({ type: 'tree', x: sx, y: sy, size: size, shade: shade,
+            cachedColor: 'rgba(46,' + Math.floor(139 * shade) + ',56,0.9)' });
+    }
+
+    // Add sparse trees in empty areas of the map
+    // First, calculate track bounds to know where to generate trees
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    for (let p of trackPath) {
+        if (p.x < minX) minX = p.x;
+        if (p.x > maxX) maxX = p.x;
+        if (p.y < minY) minY = p.y;
+        if (p.y > maxY) maxY = p.y;
+    }
+    
+    // Expand bounds to cover more area
+    let padding = 1000;
+    minX -= padding;
+    maxX += padding;
+    minY -= padding;
+    maxY += padding;
+    
+    // Generate sparse trees in empty areas
+    const sparseTreeAttempts = 800; // Number of attempts to place trees (increased for denser trees)
+    const minTreeDistance = 100; // Minimum distance between trees (decreased for denser trees)
+    
+    for (let i = 0; i < sparseTreeAttempts; i++) {
+        // Random position within bounds
+        let sx = randRange(minX, maxX);
+        let sy = randRange(minY, maxY);
+        
+        // Check distance to track
+        let closest = findClosestTrackPoint(sx, sy);
+        let distToTrack = Math.abs(getTrackDistance(sx, sy, closest.index));
+        if (distToTrack < TRACK_WIDTH / 2 + 100) continue; // Keep away from track
+        
+        // Check if on branch
+        if (isOnBranch(sx, sy)) continue;
+        
+        // Check distance to other scenery items
+        let tooClose = false;
+        for (let item of sceneryItems) {
+            let dx = sx - item.x;
+            let dy = sy - item.y;
+            let dist = Math.sqrt(dx * dx + dy * dy);
+            if (dist < minTreeDistance) {
+                tooClose = true;
+                break;
+            }
+        }
+        if (tooClose) continue;
+        
+        // Check if near lake
+        if (isNearLake(sx, sy, 100)) continue;
+        
+        // Check if near branch
+        if (isNearBranch(sx, sy, 100)) continue;
+        
+        // If all checks pass, add the tree
+        let shade = randRange(0.7, 1.0);
+        let size = randRange(20, 40);
+        sceneryItems.push({ type: 'tree', x: sx, y: sy, size: size, shade: shade,
+            cachedColor: 'rgba(46,' + Math.floor(139 * shade) + ',56,0.9)' });
+    }
 
     buildSceneryGrid();
 }
@@ -1960,10 +2034,10 @@ function createCar(color, isPlayer) {
         color: color,
         isPlayer: isPlayer,
         isNPC: !isPlayer,
-        maxSpeed: isPlayer ? 8.0 : randRange(5.5, 11.0),
+        maxSpeed: isPlayer ? 10.0 : randRange(5.5, 11.0), // Increased for 220 max speed (10.0 corresponds to 220 km/h)
         acceleration: isPlayer ? 0.08 : randRange(0.05, 0.09),
         braking: 0.10,
-        turnRate: isPlayer ? 0.045 : 0.055,
+        turnRate: isPlayer ? 0.05 : 0.055,
         friction: 0.995,
         offTrackFriction: 0.98,
         currentPathIdx: 0,
@@ -2011,54 +2085,11 @@ function placeCars() {
     cars.push(pCar);
     playerPrevX = pCar.x; playerPrevY = pCar.y;
     
-    // Static decoration cars at start line
-    let startP = trackPath[0];
-    let cdir = Math.cos(startP.dir), sdir = Math.sin(startP.dir);
-    let halfW = TRACK_WIDTH / 2;
-    
-    // Generate crowds on both sides of start line
-    for (let side = -1; side <= 1; side += 2) {
-        for (let i = 0; i < 8; i++) {
-            let lateral = (i - 3.5) * 25;
-            let offsetDist = halfW + randRange(30, 60);
-            let cx = startP.x + startP.nx * (lateral + offsetDist * side);
-            let cy = startP.y + startP.ny * (lateral + offsetDist * side);
-            let cp = findClosestTrackPoint(cx, cy);
-            let td = Math.abs(getTrackDistance(cx, cy, cp.index));
-            if (td < halfW + 15) continue;
-            let count = randInt(10, 18);
-            let people = [];
-            for (let pp = 0; pp < count; pp++) {
-                people.push({ dx: randRange(-15, 15), dy: randRange(-15, 15),
-                    color: ['#e74c3c','#3498db','#2ecc71','#f1c40f','#9b59b6','#e67e22','#1abc9c'][randInt(0,6)] });
-            }
-            sceneryItems.push({ type: 'people', x: cx, y: cy, people: people });
-        }
-    }
-    
-    // Static cars with spacing and random angle
-    for (let col = 0; col < 6; col++) {
-        let carX = startP.x + cdir * (-60) + startP.nx * ((col - 2.5) * 45);
-        let carY = startP.y + sdir * (-60) + startP.ny * ((col - 2.5) * 45);
-        let staticCar = createCar(COLORS.npcCars[Math.floor(Math.random() * COLORS.npcCars.length)], false);
-        staticCar.x = carX;
-        staticCar.y = carY;
-        staticCar.direction = startP.dir + Math.PI + randRange(-0.15, 0.15);
-        staticCar.visualAngle = staticCar.direction;
-        staticCar.speed = 0;
-        staticCar.maxSpeed = 0;
-        staticCar.acceleration = 0;
-        cars.push(staticCar);
-    }
-    
     // Initialize NPC pool
     initNPCPool();
     
     npcSpawnTimer = 0;
     npcSpawnStarted = false;
-    
-    // Rebuild scenery grid to include newly added crowds
-    buildSceneryGrid();
 }
 
 function spawnNPCNearPlayer() {
@@ -2096,6 +2127,11 @@ function spawnNPCNearPlayer() {
             spawnIdx = Math.max(playerIdx - idxOffset, 20);
         }
         spawnIdx = clamp(spawnIdx, 20, pathLength - 50);
+
+        // Avoid spawning near finish line
+        if (Math.abs(spawnIdx - (pathLength - 1)) < 100) {
+            continue; // Skip finish line area
+        }
 
         let np = trackPath[spawnIdx];
         
@@ -2145,13 +2181,6 @@ function spawnNPCNearPlayer() {
                 backwardDist = randRange(NPC_SPAWN_DISTANCE * 0.6, NPC_SPAWN_DISTANCE * 1.0);
                 continue;
             }
-            
-            // Ensure spawn position is on the road
-            let spawnOnRoad = isOnTrack(candX, candY);
-            if (!spawnOnRoad) {
-                // Try a different position
-                continue;
-            }
 
             npc.x = candX;
             npc.y = candY;
@@ -2181,7 +2210,10 @@ function spawnNPCNearPlayer() {
 let npcDensityTimer = 0;
 
 function updateNPCSpawning() {
-    if (!player || finishLineCrossed) return;
+    if (!player) return;
+    
+    // Stop spawning NPCs after player finishes
+    if (player.finished) return;
 
     if (!npcSpawnStarted) {
         npcSpawnTimer++;
@@ -2218,6 +2250,8 @@ function updateNPCSpawning() {
 
         if (dist > NPC_DESPAWN_DISTANCE) {
             car.active = false;
+            car.finished = false; // Reset finished state when despawned
+            car.finishTime = 0; // Reset finish time
             let lastIdx = activeNPCs.length - 1;
             if (i !== lastIdx) {
                 activeNPCs[i] = activeNPCs[lastIdx];
@@ -2232,22 +2266,10 @@ function updateNPCSpawning() {
     }
 
     // Update cars array in place instead of creating new array
-    // First, collect all static cars (speed 0)
-    let staticCars = [];
-    for (let car of cars) {
-        if (car.speed === 0 && !car.isPlayer) {
-            staticCars.push(car);
-        }
-    }
-    
     cars.length = 1;
     cars[0] = player;
     for (let npc of activeNPCs) {
         cars.push(npc);
-    }
-    // Add back static decoration cars
-    for (let staticCar of staticCars) {
-        cars.push(staticCar);
     }
 }
 
@@ -2263,16 +2285,21 @@ function updatePlayer(car, dt) {
 
     // Post-finish: allow control but gradually reduce speed to a stop
     let effectiveMaxSpeed = car.maxSpeed;
+    let postFinishDeceleration = false;
     if (car.finished) {
         let elapsed = raceTime - car.finishTime;
-        // Coast for 2 seconds at full speed, then smoothly brake over 4 more seconds
-        if (elapsed > 2) {
-            let brakeFactor = clamp((elapsed - 2) / 4, 0, 1);
-            effectiveMaxSpeed = car.maxSpeed * (1 - brakeFactor * 0.9);
-            if (!inputUp) car.speed *= lerp(0.995, 0.96, brakeFactor);
+        // Immediate strong deceleration after finish
+        if (elapsed > 0.5) {
+            let brakeFactor = clamp((elapsed - 0.5) / 2, 0, 1);
+            effectiveMaxSpeed = car.maxSpeed * (1 - brakeFactor * 0.95);
+            if (!inputUp) {
+                car.speed *= lerp(0.97, 0.70, brakeFactor); // Stronger deceleration
+                postFinishDeceleration = true;
+            }
         }
-        if (elapsed > 5) {
-            car.speed *= 0.94;
+        if (elapsed > 2.5) {
+            car.speed *= 0.65; // Much faster deceleration
+            postFinishDeceleration = true;
             if (Math.abs(car.speed) < 0.05) car.speed = 0;
         }
     }
@@ -2285,18 +2312,29 @@ function updatePlayer(car, dt) {
 
     if (inputUp) {
         let accelFactor = 1 - (car.speed / effectiveMaxSpeed) * 0.5;
+        
+        // Slow down acceleration linearly above 160 speed (corresponds to ~7.11 in game units)
+        let speed160 = 7.11;
+        if (car.speed > speed160) {
+            // Calculate linear slowdown factor (from 0.6 to 0.1 as speed approaches max)
+            let excessSpeed = car.speed - speed160;
+            let maxExcess = car.maxSpeed - speed160;
+            let slowdownFactor = 0.6 - (excessSpeed / maxExcess) * 0.5;
+            accelFactor *= slowdownFactor;
+        }
+        
         car.speed += car.acceleration * accelFactor * accelMult;
     } else if (inputDown) {
         car.speed -= car.braking;
-    } else {
+    } else if (!postFinishDeceleration) {
         car.speed *= car.friction;
     }
     car.speed = clamp(car.speed, -effectiveMaxSpeed * 0.175, effectiveMaxSpeed);
 
     // Turning: speed-dependent steering with moderate high-speed penalty
     let speedRatio = Math.abs(car.speed) / car.maxSpeed;
-    // Smoother curve: good at mid-speed, moderate reduction at high speed
-    let turnFactor = speedRatio * Math.max(0.3, 1.0 - speedRatio * speedRatio * 0.7);
+    // Smoother curve: good at mid-speed, stronger reduction at high speed
+    let turnFactor = speedRatio * Math.max(0.2, 1.0 - speedRatio * speedRatio * 0.85);
 
     // Target steering input: -1 (left), 0 (center), +1 (right)
     let targetSteer = 0;
@@ -2360,10 +2398,54 @@ const NPC_ACTIVE_DISTANCE = 500;
 const NPC_SIMPLE_DISTANCE = 800;
 
 function updateNPC(car, dt, isPlayerNearby) {
-    // Skip cars with zero speed (static decoration)
-    if (car.speed === 0 && !car.isPlayer) return;
-    
     if (car.collisionCooldown > 0) car.collisionCooldown -= dt;
+    
+    // Apply finish line slowdown for NPCs only after they finish
+    if (car.finished) {
+        // NPCs after finish line slow down with smooth linear deceleration
+        let elapsed = raceTime - car.finishTime;
+        
+        // Strong linear deceleration over 1.5 seconds
+        if (elapsed < 1.5) {
+            // Gradually increase braking from 0.94 to 0.70 over 1.5 seconds
+            let brakeFactor = elapsed / 1.5;
+            car.speed *= lerp(0.94, 0.70, brakeFactor);
+        } else {
+            // Final strong braking to stop quickly
+            car.speed *= 0.65;
+        }
+        
+        // Only stop completely when speed is very low
+        if (Math.abs(car.speed) < 0.1) {
+            car.speed = 0;
+        } else {
+            // Continue moving while decelerating
+            car.x += Math.cos(car.direction) * car.speed;
+            car.y += Math.sin(car.direction) * car.speed;
+        }
+        
+        // Keep finished NPCs near finish line
+        let finishP = trackPath[trackPath.length - 1];
+        let dx = car.x - finishP.x;
+        let dy = car.y - finishP.y;
+        let dist = Math.sqrt(dx * dx + dy * dy);
+        
+        // If finished NPC is too far from finish line, move it back
+        if (dist > 300) {
+            let angle = Math.atan2(dy, dx);
+            let targetX = finishP.x + Math.cos(angle) * 250;
+            let targetY = finishP.y + Math.sin(angle) * 250;
+            
+            // Smoothly move back to finish area
+            car.x += (targetX - car.x) * 0.05;
+            car.y += (targetY - car.y) * 0.05;
+        }
+        
+        // Stop AI behavior only when completely stopped
+        if (car.speed === 0) {
+            return;
+        }
+    }
     
     // Skip update if player is too far
     if (!isPlayerNearby) {
@@ -2608,7 +2690,7 @@ function isOnBranch(x, y) {
         return branchCache.result;
     }
 
-    let threshold = (BRANCH_WIDTH / 2 + 30);
+    let threshold = BRANCH_WIDTH / 2;
     let thresholdSq = threshold * threshold;
     let gx = Math.floor(x / BRANCH_GRID_SIZE);
     let gy = Math.floor(y / BRANCH_GRID_SIZE);
@@ -2894,26 +2976,46 @@ let finishSoundsStopped = false;
 let finishResultsShown = false;
 
 function checkFinishLine() {
-    if (!player || player.finished || finishLineCrossed) return;
     let lastIdx = trackPath.length - 1;
     let fp = trackPath[lastIdx];
     let halfW = TRACK_WIDTH / 2;
     // Finish line segment endpoints
     let flx1 = fp.x + fp.nx * halfW, fly1 = fp.y + fp.ny * halfW;
     let flx2 = fp.x - fp.nx * halfW, fly2 = fp.y - fp.ny * halfW;
-    // Car front point
-    let carFrontX = player.x + Math.cos(player.direction) * CAR_LENGTH * 0.4;
-    let carFrontY = player.y + Math.sin(player.direction) * CAR_LENGTH * 0.4;
-    if (segmentIntersect(playerPrevX, playerPrevY, carFrontX, carFrontY, flx1, fly1, flx2, fly2)) {
-        if (player.currentPathIdx > trackPath.length * 0.7) {
-            player.finished = true;
-            player.finishTime = raceTime;
-            finalRaceTime = raceTime;
-            finalDistance = totalDistance;
-            finishLineCrossed = true;
-            finishSoundsStopped = false;
-            finishResultsShown = false;
-            PerfMonitor.endSession();
+    
+    // Check player
+    if (player && !player.finished && !finishLineCrossed) {
+        // Car front point
+        let carFrontX = player.x + Math.cos(player.direction) * CAR_LENGTH * 0.4;
+        let carFrontY = player.y + Math.sin(player.direction) * CAR_LENGTH * 0.4;
+        if (segmentIntersect(playerPrevX, playerPrevY, carFrontX, carFrontY, flx1, fly1, flx2, fly2)) {
+            if (player.currentPathIdx > trackPath.length * 0.7) {
+                player.finished = true;
+                player.finishTime = raceTime;
+                finalRaceTime = raceTime;
+                finalDistance = totalDistance;
+                finishLineCrossed = true;
+                finishSoundsStopped = false;
+                finishResultsShown = false;
+                PerfMonitor.endSession();
+            }
+        }
+    }
+    
+    // Check NPCs
+    for (let npc of activeNPCs) {
+        if (!npc.finished) {
+            let carFrontX = npc.x + Math.cos(npc.direction) * CAR_LENGTH * 0.4;
+            let carFrontY = npc.y + Math.sin(npc.direction) * CAR_LENGTH * 0.4;
+            // Store previous position for intersection check
+            let npcPrevX = npc.x - Math.cos(npc.direction) * npc.speed;
+            let npcPrevY = npc.y - Math.sin(npc.direction) * npc.speed;
+            if (segmentIntersect(npcPrevX, npcPrevY, carFrontX, carFrontY, flx1, fly1, flx2, fly2)) {
+                if (npc.currentPathIdx > trackPath.length * 0.7) {
+                    npc.finished = true;
+                    npc.finishTime = raceTime;
+                }
+            }
         }
     }
 }
@@ -3805,7 +3907,7 @@ function drawHUD() {
     ctx.save();
 
     // --- Circular speed gauge ---
-    let maxDisplay = 180;
+    let maxDisplay = 220;
     let speedVal = Math.abs(Math.round(player.speed / player.maxSpeed * maxDisplay));
     let speedPct = clamp(speedVal / maxDisplay, 0, 1);
     let gaugeR = 38;
@@ -3824,7 +3926,18 @@ function drawHUD() {
 
     // Filled arc
     let fillEnd = arcStart + arcRange * speedPct;
-    let arcColor = speedPct > 0.8 ? COLORS.accent : (speedPct > 0.5 ? COLORS.accentYellow : COLORS.accentGreen);
+    
+    // Gradient color from green to red based on speed percentage
+    let arcColor;
+    if (speedPct < 0.5) {
+        // Green to yellow gradient
+        let t = speedPct * 2;
+        arcColor = `rgb(${Math.floor(255 * (1 - t))}, ${255}, 0)`;
+    } else {
+        // Yellow to red gradient
+        let t = (speedPct - 0.5) * 2;
+        arcColor = `rgb(255, ${Math.floor(255 * (1 - t))}, 0)`;
+    }
     ctx.strokeStyle = arcColor;
     ctx.lineWidth = 5;
     ctx.lineCap = 'round';
