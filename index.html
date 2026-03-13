@@ -6,11 +6,13 @@
 <title>迷你漫游</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-html,body{width:100%;height:100%;overflow:hidden;background:#0a0a1a;font-family:'Segoe UI',sans-serif;user-select:none}
-canvas{display:block;width:100%;height:100%;image-rendering:-webkit-optimize-contrast;image-rendering:crisp-edges}
+html,body{width:100%;height:100%;overflow:hidden;background:#2d8a4e;font-family:'Segoe UI',sans-serif;user-select:none}
+#webglCanvas{position:absolute;top:0;left:0;width:100%;height:100%;z-index:1;pointer-events:none}
+#gameCanvas{position:absolute;top:0;left:0;width:100%;height:100%;z-index:2;image-rendering:-webkit-optimize-contrast;image-rendering:crisp-edges}
 </style>
 </head>
 <body>
+<canvas id="webglCanvas"></canvas>
 <canvas id="gameCanvas"></canvas>
 <script>
 // roundRect polyfill
@@ -94,229 +96,9 @@ const COLORS = {
     hudBorder: 'rgba(255,255,255,0.08)'
 };
 
-// ==================== PERFORMANCE MONITOR ====================
-const PerfMonitor = (function() {
-    let frameTimes = [];
-    let updateTimes = [];
-    let renderTimes = [];
-    let frameTimestamps = [];
-    let lastTimestamp = 0;
-    let isMonitoring = false;
-    let sessionStartTime = 0;
-    let frameCount = 0;
-    let freezeFrameCount = 0;
-    let severeFreezeCount = 0;
-    let longFrameCount = 0;
-    const FREEZE_THRESHOLD = 100;
-    const SEVERE_FREEZE_THRESHOLD = 200;
-    const LONG_FRAME_THRESHOLD = 33;
-
-    function startSession() {
-        frameTimes = [];
-        updateTimes = [];
-        renderTimes = [];
-        frameTimestamps = [];
-        lastTimestamp = 0;
-        isMonitoring = true;
-        sessionStartTime = performance.now();
-        frameCount = 0;
-        freezeFrameCount = 0;
-        severeFreezeCount = 0;
-        longFrameCount = 0;
-    }
-
-    function endSession() {
-        isMonitoring = false;
-    }
-
-    function recordFrame(updateTime, renderTime, timestamp) {
-        if (!isMonitoring) return;
-        
-        const delta = timestamp - lastTimestamp;
-        if (lastTimestamp > 0) {
-            frameTimes.push(delta);
-            updateTimes.push(updateTime);
-            renderTimes.push(renderTime);
-            frameTimestamps.push(timestamp);
-            
-            if (delta > FREEZE_THRESHOLD) freezeFrameCount++;
-            if (delta > SEVERE_FREEZE_THRESHOLD) severeFreezeCount++;
-            if (delta > LONG_FRAME_THRESHOLD) longFrameCount++;
-        }
-        lastTimestamp = timestamp;
-        frameCount++;
-    }
-
-    function calculateStats(arr) {
-        if (arr.length === 0) return { avg: 0, min: 0, max: 0, p50: 0, p90: 0, p95: 0, p99: 0 };
-        
-        const sorted = [...arr].sort((a, b) => a - b);
-        const sum = arr.reduce((a, b) => a + b, 0);
-        const avg = sum / arr.length;
-        
-        return {
-            avg: avg,
-            min: sorted[0],
-            max: sorted[sorted.length - 1],
-            p50: sorted[Math.floor(sorted.length * 0.5)],
-            p90: sorted[Math.floor(sorted.length * 0.9)],
-            p95: sorted[Math.floor(sorted.length * 0.95)],
-            p99: sorted[Math.floor(sorted.length * 0.99)]
-        };
-    }
-
-    function generateReport() {
-        const duration = (performance.now() - sessionStartTime) / 1000;
-        const frameStats = calculateStats(frameTimes);
-        const updateStats = calculateStats(updateTimes);
-        const renderStats = calculateStats(renderTimes);
-        
-        const fps = frameCount / duration;
-        const fpsP50 = 1000 / frameStats.p50;
-        const fpsP90 = 1000 / frameStats.p90;
-        const fpsP95 = 1000 / frameStats.p95;
-        
-        const memory = performance.memory ? {
-            usedJSHeapSize: performance.memory.usedJSHeapSize,
-            totalJSHeapSize: performance.memory.totalJSHeapSize,
-            jsHeapSizeLimit: performance.memory.jsHeapSizeLimit
-        } : null;
-
-        const report = {
-            summary: {
-                duration: duration.toFixed(2) + 's',
-                totalFrames: frameCount,
-                avgFPS: fps.toFixed(2),
-                fpsP50: fpsP50.toFixed(2),
-                fpsP90: fpsP90.toFixed(2),
-                fpsP95: fpsP95.toFixed(2)
-            },
-            frameTime: {
-                avg: frameStats.avg.toFixed(2) + 'ms',
-                min: frameStats.min.toFixed(2) + 'ms',
-                max: frameStats.max.toFixed(2) + 'ms',
-                p50: frameStats.p50.toFixed(2) + 'ms',
-                p90: frameStats.p90.toFixed(2) + 'ms',
-                p95: frameStats.p95.toFixed(2) + 'ms',
-                p99: frameStats.p99.toFixed(2) + 'ms'
-            },
-            updateTime: {
-                avg: updateStats.avg.toFixed(2) + 'ms',
-                max: updateStats.max.toFixed(2) + 'ms',
-                p90: updateStats.p90.toFixed(2) + 'ms',
-                p95: updateStats.p95.toFixed(2) + 'ms'
-            },
-            renderTime: {
-                avg: renderStats.avg.toFixed(2) + 'ms',
-                max: renderStats.max.toFixed(2) + 'ms',
-                p90: renderStats.p90.toFixed(2) + 'ms',
-                p95: renderStats.p95.toFixed(2) + 'ms'
-            },
-            issues: {
-                freezeFrames: freezeFrameCount,
-                severeFreezes: severeFreezeCount,
-                longFrames: longFrameCount,
-                freezeRate: ((freezeFrameCount / frameCount) * 100).toFixed(2) + '%'
-            }
-        };
-
-        if (memory) {
-            report.memory = {
-                usedJSHeapSize: (memory.usedJSHeapSize / 1048576).toFixed(2) + 'MB',
-                totalJSHeapSize: (memory.totalJSHeapSize / 1048576).toFixed(2) + 'MB',
-                heapUsagePercent: ((memory.usedJSHeapSize / memory.jsHeapSizeLimit) * 100).toFixed(2) + '%'
-            };
-        }
-
-        return report;
-    }
-
-    function downloadReport() {
-        const report = generateReport();
-        const date = new Date().toLocaleString('zh-CN');
-        
-        let content = `# 性能分析报告\n`;
-        content += `生成时间: ${date}\n\n`;
-        
-        content += `## 概要\n`;
-        content += `- 游戏时长: ${report.summary.duration}\n`;
-        content += `- 总帧数: ${report.summary.totalFrames}\n`;
-        content += `- 平均FPS: ${report.summary.avgFPS}\n`;
-        content += `- FPS (P50): ${report.summary.fpsP50}\n`;
-        content += `- FPS (P90): ${report.summary.fpsP90}\n`;
-        content += `- FPS (P95): ${report.summary.fpsP95}\n\n`;
-        
-        content += `## 帧时间分析\n`;
-        content += `- 平均: ${report.frameTime.avg}\n`;
-        content += `- 最小: ${report.frameTime.min}\n`;
-        content += `- 最大: ${report.frameTime.max}\n`;
-        content += `- P50: ${report.frameTime.p50}\n`;
-        content += `- P90: ${report.frameTime.p90}\n`;
-        content += `- P95: ${report.frameTime.p95}\n`;
-        content += `- P99: ${report.frameTime.p99}\n\n`;
-        
-        content += `## 更新耗时 (Update)\n`;
-        content += `- 平均: ${report.updateTime.avg}\n`;
-        content += `- 最大: ${report.updateTime.max}\n`;
-        content += `- P90: ${report.updateTime.p90}\n`;
-        content += `- P95: ${report.updateTime.p95}\n\n`;
-        
-        content += `## 渲染耗时 (Render)\n`;
-        content += `- 平均: ${report.renderTime.avg}\n`;
-        content += `- 最大: ${report.renderTime.max}\n`;
-        content += `- P90: ${report.renderTime.p90}\n`;
-        content += `- P95: ${report.renderTime.p95}\n\n`;
-        
-        content += `## 问题检测\n`;
-        content += `- 卡顿帧数 (>100ms): ${report.issues.freezeFrames}\n`;
-        content += `- 严重卡顿 (>200ms): ${report.issues.severeFreezes}\n`;
-        content += `- 长帧 (>33ms): ${report.issues.longFrames}\n`;
-        content += `- 卡顿率: ${report.issues.freezeRate}\n\n`;
-        
-        if (report.memory) {
-            content += `## 内存使用\n`;
-            content += `- JS堆内存: ${report.memory.usedJSHeapSize}\n`;
-            content += `- 总堆内存: ${report.memory.totalJSHeapSize}\n`;
-            content += `- 堆使用率: ${report.memory.heapUsagePercent}\n`;
-        }
-
-        const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
-        
-        if (navigator.userAgent.includes('Mobile') || navigator.userAgent.includes('Android')) {
-            const reader = new FileReader();
-            reader.onload = function() {
-                const a = document.createElement('a');
-                a.href = reader.result;
-                a.download = `performance_report_${Date.now()}.txt`;
-                document.body.appendChild(a);
-                a.click();
-                document.body.removeChild(a);
-            };
-            reader.readAsDataURL(blob);
-        } else {
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `performance_report_${Date.now()}.txt`;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            URL.revokeObjectURL(url);
-        }
-    }
-
-    return {
-        startSession,
-        endSession,
-        recordFrame,
-        generateReport,
-        downloadReport
-    };
-})();
-
 // ==================== CANVAS SETUP ====================
 const canvas = document.getElementById('gameCanvas');
-const ctx = canvas.getContext('2d', { alpha: false, desynchronized: false });
+const ctx = canvas.getContext('2d', { alpha: true, desynchronized: false });
 
 // Enable image smoothing for better quality
 ctx.imageSmoothingEnabled = true;
@@ -324,6 +106,525 @@ ctx.imageSmoothingQuality = 'high';
 
 let W = canvas.width = window.innerWidth;
 let H = canvas.height = window.innerHeight;
+
+// ==================== WEBGL SETUP ====================
+const webglCanvas = document.getElementById('webglCanvas');
+const gl = webglCanvas.getContext('webgl', { alpha: true, antialias: true, preserveDrawingBuffer: false, powerPreference: 'high-performance' });
+
+if (!gl) {
+    console.error('WebGL not supported');
+} else {
+    console.log('WebGL initialized successfully');
+}
+
+webglCanvas.width = window.innerWidth;
+webglCanvas.height = window.innerHeight;
+gl.viewport(0, 0, webglCanvas.width, webglCanvas.height);
+console.log('WebGL viewport:', webglCanvas.width, webglCanvas.height);
+
+// Vertex shader
+const vertexShaderSource = `
+    attribute vec2 a_position;
+    attribute vec4 a_color;
+    uniform vec2 u_resolution;
+    uniform vec2 u_camera;
+    uniform float u_scale;
+    uniform float u_cos;
+    uniform float u_sin;
+    uniform float u_sway;
+    uniform vec2 u_offset;
+    varying vec4 v_color;
+
+    void main() {
+        vec2 pos = a_position - u_camera;
+        vec2 rotated;
+        rotated.x = pos.x * u_cos - pos.y * u_sin;
+        rotated.y = pos.x * u_sin + pos.y * u_cos;
+        vec2 screenPos = rotated * u_scale + vec2(u_sway, 0.0) + u_offset;
+        vec2 clipSpace = (screenPos / u_resolution) * 2.0 - 1.0;
+        clipSpace.y = -clipSpace.y; // Flip Y axis for WebGL (Canvas Y is down, WebGL Y is up)
+        gl_Position = vec4(clipSpace, 0.0, 1.0);
+        v_color = a_color;
+    }
+`;
+
+// Fragment shader
+const fragmentShaderSource = `
+    precision mediump float;
+    varying vec4 v_color;
+
+    void main() {
+        gl_FragColor = v_color;
+    }
+`;
+
+function createShader(gl, type, source) {
+    const shader = gl.createShader(type);
+    gl.shaderSource(shader, source);
+    gl.compileShader(shader);
+    if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+        console.error('Shader compile error:', gl.getShaderInfoLog(shader));
+        gl.deleteShader(shader);
+        return null;
+    }
+    return shader;
+}
+
+function createProgram(gl, vertexShader, fragmentShader) {
+    const program = gl.createProgram();
+    gl.attachShader(program, vertexShader);
+    gl.attachShader(program, fragmentShader);
+    gl.linkProgram(program);
+    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+        console.error('Program link error:', gl.getProgramInfoLog(program));
+        gl.deleteProgram(program);
+        return null;
+    }
+    return program;
+}
+
+const vertexShader = createShader(gl, gl.VERTEX_SHADER, vertexShaderSource);
+const fragmentShader = createShader(gl, gl.FRAGMENT_SHADER, fragmentShaderSource);
+const webglProgram = createProgram(gl, vertexShader, fragmentShader);
+
+const positionLocation = gl.getAttribLocation(webglProgram, 'a_position');
+const colorLocation = gl.getAttribLocation(webglProgram, 'a_color');
+const resolutionLocation = gl.getUniformLocation(webglProgram, 'u_resolution');
+const cameraLocation = gl.getUniformLocation(webglProgram, 'u_camera');
+const scaleLocation = gl.getUniformLocation(webglProgram, 'u_scale');
+const cosLocation = gl.getUniformLocation(webglProgram, 'u_cos');
+const sinLocation = gl.getUniformLocation(webglProgram, 'u_sin');
+const swayLocation = gl.getUniformLocation(webglProgram, 'u_sway');
+const offsetLocation = gl.getUniformLocation(webglProgram, 'u_offset');
+
+const positionBuffer = gl.createBuffer();
+const colorBuffer = gl.createBuffer();
+
+// WebGL buffers for different road elements
+let trackSurfacePositions = [];
+let trackSurfaceColors = [];
+let branchSurfacePositions = [];
+let branchSurfaceColors = [];
+let edgePositions = [];
+let edgeColors = [];
+let centerLinePositions = [];
+let centerLineColors = [];
+let wallPositions = [];
+let wallColors = [];
+
+function hexToRgb(hex) {
+    const r = parseInt(hex.slice(1, 3), 16) / 255;
+    const g = parseInt(hex.slice(3, 5), 16) / 255;
+    const b = parseInt(hex.slice(5, 7), 16) / 255;
+    return [r, g, b, 1.0];
+}
+
+function rgbaToRgb(rgba) {
+    const match = rgba.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)/);
+    if (match) {
+        return [
+            parseInt(match[1]) / 255,
+            parseInt(match[2]) / 255,
+            parseInt(match[3]) / 255,
+            match[4] ? parseFloat(match[4]) : 1.0
+        ];
+    }
+    return [1, 1, 1, 1];
+}
+
+// ==================== WEBGL DATA BUILDING ====================
+function buildWebGLTrackData() {
+    trackSurfacePositions = [];
+    trackSurfaceColors = [];
+    branchSurfacePositions = [];
+    branchSurfaceColors = [];
+    edgePositions = [];
+    edgeColors = [];
+    centerLinePositions = [];
+    centerLineColors = [];
+    wallPositions = [];
+    wallColors = [];
+    
+    buildTrackSurface();
+    buildBranchSurfaces();
+    buildRoadEdges();
+    buildCenterLine();
+    buildWalls();
+}
+
+function buildTrackSurface() {
+    const color = hexToRgb(COLORS.trackSurface);
+    
+    // Main visible range
+    const vStart = 0;
+    const vEnd = trackLeftEdge.length - 1;
+    
+    if (vEnd > vStart) {
+        // Use TRIANGLE_STRIP: L0, R0, L1, R1, L2, R2, L3, R3...
+        // This creates proper quads: (L0,R0,L1), (R0,L1,R1), (L1,R1,L2), (R1,L2,R2)...
+        for (let i = vStart; i < vEnd; i++) {
+            trackSurfacePositions.push(
+                trackLeftEdge[i].x, trackLeftEdge[i].y,
+                trackRightEdge[i].x, trackRightEdge[i].y
+            );
+            trackSurfaceColors.push(...color, ...color);
+        }
+    }
+}
+
+function buildBranchSurfaces() {
+    const color = hexToRgb(COLORS.branchSurface);
+    
+    for (let bp of branchPaths) {
+        const skipStart = Math.min(3, Math.floor(bp.path.length * 0.05));
+        const skipEnd = Math.min(3, Math.floor(bp.path.length * 0.05));
+        
+        if (bp.leftEdge.length - skipStart - skipEnd < 2) continue;
+        
+        // Use TRIANGLES for branch surfaces to avoid TRIANGLE_STRIP issues
+        const vStart = skipStart;
+        const vEnd = bp.leftEdge.length - skipEnd - 1;
+        
+        if (vEnd > vStart) {
+            for (let i = vStart; i < vEnd; i++) {
+                const wp1 = bp.leftEdge[i];
+                const wp2 = bp.leftEdge[i + 1];
+                const wp3 = bp.rightEdge[i + 1];
+                const wp4 = bp.rightEdge[i];
+                
+                branchSurfacePositions.push(
+                    wp1.x, wp1.y,
+                    wp2.x, wp2.y,
+                    wp3.x, wp3.y,
+                    wp1.x, wp1.y,
+                    wp3.x, wp3.y,
+                    wp4.x, wp4.y
+                );
+                
+                for (let j = 0; j < 6; j++) {
+                    branchSurfaceColors.push(...color);
+                }
+            }
+        }
+    }
+}
+
+function buildRoadEdges() {
+    const color = hexToRgb(COLORS.trackEdge);
+    const edgeThickness = 4;
+    
+    // Main track edges - draw as triangles for thicker lines
+    for (let i = 0; i < trackLeftEdge.length - 1; i++) {
+        const wp1 = trackLeftEdge[i];
+        const wp2 = trackLeftEdge[i + 1];
+        
+        // Calculate perpendicular direction for thickness
+        const dx = wp2.x - wp1.x;
+        const dy = wp2.y - wp1.y;
+        const len = Math.sqrt(dx * dx + dy * dy);
+        const nx = -dy / len;
+        const ny = dx / len;
+        
+        // Create thick line as 2 triangles
+        const halfThick = edgeThickness;
+        const p1x = wp1.x + nx * halfThick;
+        const p1y = wp1.y + ny * halfThick;
+        const p2x = wp1.x - nx * halfThick;
+        const p2y = wp1.y - ny * halfThick;
+        const p3x = wp2.x - nx * halfThick;
+        const p3y = wp2.y - ny * halfThick;
+        const p4x = wp2.x + nx * halfThick;
+        const p4y = wp2.y + ny * halfThick;
+        
+        edgePositions.push(
+            p1x, p1y,
+            p2x, p2y,
+            p3x, p3y,
+            p1x, p1y,
+            p3x, p3y,
+            p4x, p4y
+        );
+        
+        for (let j = 0; j < 6; j++) {
+            edgeColors.push(...color);
+        }
+    }
+    
+    for (let i = 0; i < trackRightEdge.length - 1; i++) {
+        const wp1 = trackRightEdge[i];
+        const wp2 = trackRightEdge[i + 1];
+        
+        // Calculate perpendicular direction for thickness
+        const dx = wp2.x - wp1.x;
+        const dy = wp2.y - wp1.y;
+        const len = Math.sqrt(dx * dx + dy * dy);
+        const nx = -dy / len;
+        const ny = dx / len;
+        
+        // Create thick line as 2 triangles
+        const halfThick = edgeThickness;
+        const p1x = wp1.x + nx * halfThick;
+        const p1y = wp1.y + ny * halfThick;
+        const p2x = wp1.x - nx * halfThick;
+        const p2y = wp1.y - ny * halfThick;
+        const p3x = wp2.x - nx * halfThick;
+        const p3y = wp2.y - ny * halfThick;
+        const p4x = wp2.x + nx * halfThick;
+        const p4y = wp2.y + ny * halfThick;
+        
+        edgePositions.push(
+            p1x, p1y,
+            p2x, p2y,
+            p3x, p3y,
+            p1x, p1y,
+            p3x, p3y,
+            p4x, p4y
+        );
+        
+        for (let j = 0; j < 6; j++) {
+            edgeColors.push(...color);
+        }
+    }
+    
+    // Branch edges
+    for (let bp of branchPaths) {
+        const skipStart = Math.min(3, Math.floor(bp.path.length * 0.05));
+        const skipEnd = Math.min(3, Math.floor(bp.path.length * 0.05));
+        
+        for (let i = skipStart; i < bp.leftEdge.length - 1; i++) {
+            const wp1 = bp.leftEdge[i];
+            const wp2 = bp.leftEdge[i + 1];
+            
+            // Calculate perpendicular direction for thickness
+            const dx = wp2.x - wp1.x;
+            const dy = wp2.y - wp1.y;
+            const len = Math.sqrt(dx * dx + dy * dy);
+            const nx = -dy / len;
+            const ny = dx / len;
+            
+            // Create thick line as 2 triangles
+            const halfThick = edgeThickness;
+            const p1x = wp1.x + nx * halfThick;
+            const p1y = wp1.y + ny * halfThick;
+            const p2x = wp1.x - nx * halfThick;
+            const p2y = wp1.y - ny * halfThick;
+            const p3x = wp2.x - nx * halfThick;
+            const p3y = wp2.y - ny * halfThick;
+            const p4x = wp2.x + nx * halfThick;
+            const p4y = wp2.y + ny * halfThick;
+            
+            edgePositions.push(
+                p1x, p1y,
+                p2x, p2y,
+                p3x, p3y,
+                p1x, p1y,
+                p3x, p3y,
+                p4x, p4y
+            );
+            
+            for (let j = 0; j < 6; j++) {
+                edgeColors.push(...color);
+            }
+        }
+        
+        for (let i = 0; i < bp.rightEdge.length - skipEnd - 1; i++) {
+            const wp1 = bp.rightEdge[i];
+            const wp2 = bp.rightEdge[i + 1];
+            
+            // Calculate perpendicular direction for thickness
+            const dx = wp2.x - wp1.x;
+            const dy = wp2.y - wp1.y;
+            const len = Math.sqrt(dx * dx + dy * dy);
+            const nx = -dy / len;
+            const ny = dx / len;
+            
+            // Create thick line as 2 triangles
+            const halfThick = edgeThickness;
+            const p1x = wp1.x + nx * halfThick;
+            const p1y = wp1.y + ny * halfThick;
+            const p2x = wp1.x - nx * halfThick;
+            const p2y = wp1.y - ny * halfThick;
+            const p3x = wp2.x - nx * halfThick;
+            const p3y = wp2.y - ny * halfThick;
+            const p4x = wp2.x + nx * halfThick;
+            const p4y = wp2.y + ny * halfThick;
+            
+            edgePositions.push(
+                p1x, p1y,
+                p2x, p2y,
+                p3x, p3y,
+                p1x, p1y,
+                p3x, p3y,
+                p4x, p4y
+            );
+            
+            for (let j = 0; j < 6; j++) {
+                edgeColors.push(...color);
+            }
+        }
+    }
+}
+
+function buildCenterLine() {
+    const color = rgbaToRgb('rgba(255,255,255,0.25)');
+    const inset = TRACK_WIDTH * 0.38;
+    
+    for (let i = 0; i < trackPath.length - 1; i++) {
+        const wp = trackPath[i];
+        const wpNext = trackPath[i + 1];
+        
+        // Left shoulder line
+        const lx1 = wp.x + wp.nx * inset;
+        const ly1 = wp.y + wp.ny * inset;
+        const lx2 = wpNext.x + wpNext.nx * inset;
+        const ly2 = wpNext.y + wpNext.ny * inset;
+        
+        centerLinePositions.push(lx1, ly1, lx2, ly2);
+        centerLineColors.push(...color, ...color);
+        
+        // Right shoulder line
+        const rx1 = wp.x - wp.nx * inset;
+        const ry1 = wp.y - wp.ny * inset;
+        const rx2 = wpNext.x - wpNext.nx * inset;
+        const ry2 = wpNext.y - wpNext.ny * inset;
+        
+        centerLinePositions.push(rx1, ry1, rx2, ry2);
+        centerLineColors.push(...color, ...color);
+    }
+}
+
+function buildWalls() {
+    const wallColor = hexToRgb(COLORS.wallColor);
+    const wallEdgeColor = hexToRgb(COLORS.wallEdge);
+    const wallThickness = 8;
+    
+    for (let wall of trackWalls) {
+        for (let i = wall.startIdx; i < wall.endIdx && i < trackPath.length - 1; i++) {
+            if (wall.side === 'left' || wall.side === 'both') {
+                const wp1 = trackLeftEdge[i];
+                const wp2 = trackLeftEdge[i + 1];
+                const p = trackPath[i];
+                const p2 = trackPath[i + 1];
+                
+                const wo1x = wp1.x + p.nx * wallThickness;
+                const wo1y = wp1.y + p.ny * wallThickness;
+                const wo2x = wp2.x + p2.nx * wallThickness;
+                const wo2y = wp2.y + p2.ny * wallThickness;
+                
+                wallPositions.push(
+                    wp1.x, wp1.y,
+                    wp2.x, wp2.y,
+                    wo2x, wo2y,
+                    wp1.x, wp1.y,
+                    wo2x, wo2y,
+                    wo1x, wo1y
+                );
+                
+                for (let j = 0; j < 6; j++) {
+                    wallColors.push(...wallColor);
+                }
+            }
+            
+            if (wall.side === 'right' || wall.side === 'both') {
+                const wp1 = trackRightEdge[i];
+                const wp2 = trackRightEdge[i + 1];
+                const p = trackPath[i];
+                const p2 = trackPath[i + 1];
+                
+                const wo1x = wp1.x - p.nx * wallThickness;
+                const wo1y = wp1.y - p.ny * wallThickness;
+                const wo2x = wp2.x - p2.nx * wallThickness;
+                const wo2y = wp2.y - p2.ny * wallThickness;
+                
+                wallPositions.push(
+                    wp1.x, wp1.y,
+                    wp2.x, wp2.y,
+                    wo2x, wo2y,
+                    wp1.x, wp1.y,
+                    wo2x, wo2y,
+                    wo1x, wo1y
+                );
+                
+                for (let j = 0; j < 6; j++) {
+                    wallColors.push(...wallColor);
+                }
+            }
+        }
+    }
+}
+
+// ==================== WEBGL RENDERING ====================
+function renderWebGL() {
+    gl.clearColor(0, 0, 0, 0);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    
+    gl.useProgram(webglProgram);
+    
+    gl.uniform2f(resolutionLocation, webglCanvas.width, webglCanvas.height);
+    gl.uniform2f(cameraLocation, camera.x, camera.y);
+    gl.uniform1f(scaleLocation, VIEW_SCALE);
+    gl.uniform1f(cosLocation, cameraTransform.cos);
+    gl.uniform1f(sinLocation, cameraTransform.sin);
+    gl.uniform1f(swayLocation, camera.swayOffset);
+    gl.uniform2f(offsetLocation, W / 2, H * 0.6);
+    
+    gl.enableVertexAttribArray(positionLocation);
+    gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+    gl.vertexAttribPointer(positionLocation, 2, gl.FLOAT, false, 0, 0);
+    
+    gl.enableVertexAttribArray(colorLocation);
+    gl.bindBuffer(gl.ARRAY_BUFFER, colorBuffer);
+    gl.vertexAttribPointer(colorLocation, 4, gl.FLOAT, false, 0, 0);
+    
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+    
+    // Draw edges first (bottom layer) - as triangles for thickness
+    if (edgePositions.length > 0) {
+        gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(edgePositions), gl.DYNAMIC_DRAW);
+        gl.bindBuffer(gl.ARRAY_BUFFER, colorBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(edgeColors), gl.DYNAMIC_DRAW);
+        gl.drawArrays(gl.TRIANGLES, 0, edgePositions.length / 2);
+    }
+    
+    // Draw walls
+    if (wallPositions.length > 0) {
+        gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(wallPositions), gl.DYNAMIC_DRAW);
+        gl.bindBuffer(gl.ARRAY_BUFFER, colorBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(wallColors), gl.DYNAMIC_DRAW);
+        gl.drawArrays(gl.TRIANGLES, 0, wallPositions.length / 2);
+    }
+    
+    // Draw branch surfaces using TRIANGLES (to avoid TRIANGLE_STRIP issues)
+    if (branchSurfacePositions.length > 0) {
+        gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(branchSurfacePositions), gl.DYNAMIC_DRAW);
+        gl.bindBuffer(gl.ARRAY_BUFFER, colorBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(branchSurfaceColors), gl.DYNAMIC_DRAW);
+        gl.drawArrays(gl.TRIANGLES, 0, branchSurfacePositions.length / 2);
+    }
+    
+    // Draw track surface using TRIANGLE_STRIP
+    if (trackSurfacePositions.length > 0) {
+        gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(trackSurfacePositions), gl.DYNAMIC_DRAW);
+        gl.bindBuffer(gl.ARRAY_BUFFER, colorBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(trackSurfaceColors), gl.DYNAMIC_DRAW);
+        gl.drawArrays(gl.TRIANGLE_STRIP, 0, trackSurfacePositions.length / 2);
+    }
+    
+    // Draw center lines
+    if (centerLinePositions.length > 0) {
+        gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(centerLinePositions), gl.DYNAMIC_DRAW);
+        gl.bindBuffer(gl.ARRAY_BUFFER, colorBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(centerLineColors), gl.DYNAMIC_DRAW);
+        gl.lineWidth(2.0);
+        gl.drawArrays(gl.LINES, 0, centerLinePositions.length / 2);
+    }
+}
 
 // ==================== GAME STATE ====================
 let gameState = 'menu'; // menu, loading, countdown, racing, results
@@ -454,7 +755,6 @@ window.addEventListener('keydown', function(e) {
     if (gameState === 'results' || finishResultsShown) {
         if (e.code === 'Digit1' || e.code === 'Numpad1') { stopGameSounds(); gameState = 'menu'; finishResultsShown = false; }
         if (e.code === 'Digit2' || e.code === 'Numpad2') continueDriving();
-        if (e.code === 'Digit3' || e.code === 'Numpad3') PerfMonitor.downloadReport();
     }
 });
 
@@ -990,6 +1290,30 @@ function segmentsIntersect(a, b, c, d) {
     return t >= 0 && t <= 1 && u >= 0 && u <= 1;
 }
 
+// Calculate distance from point to line segment
+function pointToSegmentDistance(point, segStart, segEnd) {
+    let dx = segEnd.x - segStart.x;
+    let dy = segEnd.y - segStart.y;
+    let lenSq = dx * dx + dy * dy;
+    
+    if (lenSq === 0) {
+        let px = point.x - segStart.x;
+        let py = point.y - segStart.y;
+        return Math.sqrt(px * px + py * py);
+    }
+    
+    let t = ((point.x - segStart.x) * dx + (point.y - segStart.y) * dy) / lenSq;
+    t = Math.max(0, Math.min(1, t));
+    
+    let projX = segStart.x + t * dx;
+    let projY = segStart.y + t * dy;
+    
+    let px = point.x - projX;
+    let py = point.y - projY;
+    
+    return Math.sqrt(px * px + py * py);
+}
+
 // Check if path points have self-intersection
 function pathHasIntersection(path, skipNearby) {
     let len = path.length;
@@ -1014,7 +1338,7 @@ function generateSprintTrack() {
     if (window.bigTurnContinuation) {
         window.bigTurnContinuation.count = 0;
     }
-    let maxAttempts = 10;
+    let maxAttempts = 30;
     
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
         let nodeCount = randInt(100, 130);
@@ -1023,19 +1347,32 @@ function generateSprintTrack() {
         let x = 0, y = 0;
         let valid = true;
         
+        // Track if last segment was a curve to enforce longer straights after curves
+        let lastWasCurve = false;
+        let straightAfterCurveCount = 0;
+        
         for (let i = 0; i < nodeCount && valid; i++) {
             nodes.push({ x: x, y: y });
             
             let segLen = randRange(600, 1000);
             let r = Math.random();
             let turnAmount;
+            let isCurve = false;
             
-            // Hairpin turn (发卡弯) - 6% chance
-            // Creates a U-shaped tight turn
-            if (r < 0.06) {
+            // If we just had a curve, 25% chance to enforce a longer straight section
+            if (lastWasCurve && straightAfterCurveCount < 2 && Math.random() < 0.25) {
+                // Force a straight section after curve (minimum 2 segments)
+                turnAmount = 0;
+                segLen = randRange(700, 1100);
+                straightAfterCurveCount++;
+                lastWasCurve = false;
+            }
+            // Hairpin turn (发卡弯) - 12% chance
+            if (r < 0.12) {
                 let hairpinDir = Math.random() < 0.5 ? 1 : -1;
                 turnAmount = randRange(0.6, 0.9) * hairpinDir;
                 segLen = randRange(400, 600);
+                isCurve = true;
                 // Mark for hairpin continuation - opposite direction next
                 if (!window.hairpinContinuation) window.hairpinContinuation = { count: 0, amount: 0 };
                 window.hairpinContinuation.count = randInt(2, 3);
@@ -1045,13 +1382,15 @@ function generateSprintTrack() {
             else if (window.hairpinContinuation && window.hairpinContinuation.count > 0) {
                 turnAmount = window.hairpinContinuation.amount;
                 segLen = randRange(400, 600);
+                isCurve = true;
                 window.hairpinContinuation.count--;
             }
-            // Big 90-degree turn for square-like track (15% chance)
-            else if (r < 0.38) {
+            // Big 90-degree turn for square-like track (25% chance)
+            else if (r < 0.37) {
                 let turnDir = Math.random() < 0.5 ? 1 : -1;
                 turnAmount = randRange(0.8, 1.2) * turnDir; // Large turn angle
                 segLen = randRange(600, 900);
+                isCurve = true;
                 if (!window.bigTurnContinuation) window.bigTurnContinuation = { count: 0, amount: 0 };
                 window.bigTurnContinuation.count = 1;
                 window.bigTurnContinuation.amount = turnAmount;
@@ -1059,16 +1398,17 @@ function generateSprintTrack() {
             // Continue big turn - straight section to complete 90-degree
             else if (window.bigTurnContinuation && window.bigTurnContinuation.count > 0) {
                 turnAmount = 0;
-                segLen = randRange(500, 700);
+                segLen = randRange(600, 900); // Increased from 500-700
                 window.bigTurnContinuation.count = 0;
             }
-            // Large arc / near-circle curve (6% chance)
-            else if (r < 0.44) {
+            // Large arc / near-circle curve (5% chance)
+            else if (r < 0.42) {
                 // Generate a continuous arc by setting a consistent small turn
                 // This creates near-circular large radius curves
                 let arcDir = Math.random() < 0.5 ? 1 : -1;
                 turnAmount = randRange(0.08, 0.15) * arcDir;
                 segLen = randRange(500, 800);
+                isCurve = true;
                 // Mark for continuation in next segments
                 if (!window.arcContinuation) window.arcContinuation = { count: 0, amount: 0 };
                 window.arcContinuation.count = randInt(3, 6);
@@ -1078,21 +1418,23 @@ function generateSprintTrack() {
             else if (window.arcContinuation && window.arcContinuation.count > 0) {
                 turnAmount = window.arcContinuation.amount;
                 segLen = randRange(500, 800);
+                isCurve = true;
                 window.arcContinuation.count--;
             }
-            // S-curve pattern - realistic S-bend (first turn)
-            else if (r < 0.68) {
+            // S-curve pattern - realistic S-bend (first turn) - 13% chance
+            else if (r < 0.55) {
                 turnAmount = randRange(0.7, 1.0) * (Math.random() < 0.5 ? 1 : -1);
                 if (!window.sCurveContinuation) window.sCurveContinuation = { count: 0, amount: 0, phase: 0 };
                 window.sCurveContinuation.count = 1;
                 window.sCurveContinuation.amount = turnAmount > 0 ? 1 : -1;
                 window.sCurveContinuation.phase = 'turn1';
                 segLen = randRange(500, 700);
+                isCurve = true;
             }
             // S-curve - straight middle section
             else if (window.sCurveContinuation && window.sCurveContinuation.count > 0 && window.sCurveContinuation.phase === 'turn1') {
                 turnAmount = 0;
-                segLen = randRange(400, 600);
+                segLen = randRange(500, 700); // Increased from 400-600
                 window.sCurveContinuation.count = 1;
                 window.sCurveContinuation.phase = 'straight';
             }
@@ -1102,43 +1444,64 @@ function generateSprintTrack() {
                 segLen = randRange(500, 700);
                 window.sCurveContinuation.count = 0;
                 window.sCurveContinuation.phase = 0;
+                isCurve = true;
             }
-            // Long straight (4% chance)
-            else if (r < 0.72) {
+            // Long straight (10% chance)
+            else if (r < 0.65) {
                 turnAmount = 0;
                 segLen = randRange(800, 1200);
             }
             // Gentle curves (15% chance)
-            else if (r < 0.87) {
+            else if (r < 0.80) {
                 turnAmount = randRange(-0.35, 0.35);
+                isCurve = Math.abs(turnAmount) > 0.15;
             }
             // Sharper turns (remaining chance)
             else {
                 turnAmount = randRange(-0.5, 0.5);
+                isCurve = Math.abs(turnAmount) > 0.15;
+            }
+            
+            // Update curve tracking
+            if (isCurve) {
+                lastWasCurve = true;
+                straightAfterCurveCount = 0;
             }
             
             let newAngle = baseAngle + turnAmount;
             let nx = x + Math.cos(newAngle) * segLen;
             let ny = y + Math.sin(newAngle) * segLen;
             
-            // Self-intersection check on nodes (skip last 5 segments)
+            // Self-intersection check on nodes (skip last 8 segments for better detection)
             let hasIntersection = false;
-            if (nodes.length > 6) {
+            if (nodes.length > 10) {
                 let newSegStart = { x: x, y: y };
                 let newSegEnd = { x: nx, y: ny };
                 
-                for (let j = 0; j < nodes.length - 5; j++) {
+                for (let j = 0; j < nodes.length - 8; j++) {
                     if (segmentsIntersect(nodes[j], nodes[j + 1], newSegStart, newSegEnd)) {
                         hasIntersection = true;
                         break;
                     }
                 }
+                
+                // Also check if new segment comes too close to existing nodes (proximity check)
+                if (!hasIntersection) {
+                    for (let j = 0; j < nodes.length - 8; j++) {
+                        let node = nodes[j];
+                        let dist = pointToSegmentDistance(node, newSegStart, newSegEnd);
+                        if (dist < TRACK_WIDTH * 0.6) {
+                            hasIntersection = true;
+                            break;
+                        }
+                    }
+                }
             }
             
             if (hasIntersection) {
-                // Try to find a valid direction
+                // Try to find a valid direction with more retries
                 let found = false;
-                for (let retry = 0; retry < 8; retry++) {
+                for (let retry = 0; retry < 15; retry++) {
                     turnAmount = randRange(-0.4, 0.4);
                     newAngle = baseAngle + turnAmount;
                     nx = x + Math.cos(newAngle) * segLen;
@@ -1148,10 +1511,22 @@ function generateSprintTrack() {
                     let newSegStart = { x: x, y: y };
                     let newSegEnd = { x: nx, y: ny };
                     
-                    for (let j = 0; j < nodes.length - 5; j++) {
+                    for (let j = 0; j < nodes.length - 8; j++) {
                         if (segmentsIntersect(nodes[j], nodes[j + 1], newSegStart, newSegEnd)) {
                             hasIntersection = true;
                             break;
+                        }
+                    }
+                    
+                    // Also check proximity in retry
+                    if (!hasIntersection) {
+                        for (let j = 0; j < nodes.length - 8; j++) {
+                            let node = nodes[j];
+                            let dist = pointToSegmentDistance(node, newSegStart, newSegEnd);
+                            if (dist < TRACK_WIDTH * 0.6) {
+                                hasIntersection = true;
+                                break;
+                            }
                         }
                     }
                     
@@ -1177,8 +1552,8 @@ function generateSprintTrack() {
         // Build path and verify no intersection
         let testPath = buildTrackPath(nodes, false);
         
-        // Check path for intersections (skip nearby segments - 30 points apart)
-        if (!pathHasIntersection(testPath, 30)) {
+        // Check path for intersections (skip nearby segments - 50 points apart for stricter check)
+        if (!pathHasIntersection(testPath, 50)) {
             return nodes;
         }
     }
@@ -1413,6 +1788,7 @@ function generateTrack() {
     trackWalls = generateWalls(trackPath.length);
     generateScenery();
     computeMinimapBounds();
+    buildWebGLTrackData();
 }
 
 // ==================== MINIMAP BOUNDS ====================
@@ -4494,6 +4870,7 @@ function startGame() {
         generateScenery();
         computeMinimapBounds();
         prerenderMinimapTrack();
+        buildWebGLTrackData();
         loadingProgress = 0.85;
     }, 300);
     
@@ -4728,17 +5105,10 @@ function render() {
     }
 
     // Game rendering
-    drawGrass();
+    renderWebGL();
     drawScenery();
-    // Draw all road edges first (under the road surface) for proper layering
-    drawAllRoadEdges();
-    // Then draw road surfaces (they will cover the inner parts of the edges)
-    drawBranchSurfaces();
-    drawTrackSurface();
-    drawCenterLine();
-    drawWalls();
 
-    // Start/finish lines
+    // Start/finish lines (still using Canvas for checkerboard pattern)
     drawStartFinishLine(0);
     drawStartFinishLine(trackPath.length - 1);
 
@@ -4862,10 +5232,6 @@ function gameLoop(timestamp) {
     let renderStart = performance.now();
     render();
     let renderTime = performance.now() - renderStart;
-
-    if (gameState === 'racing' || gameState === 'countdown') {
-        PerfMonitor.recordFrame(updateTime, renderTime, timestamp);
-    }
 
     requestAnimationFrame(gameLoop);
 }
