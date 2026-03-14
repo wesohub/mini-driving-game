@@ -14,6 +14,7 @@ html,body{width:100%;height:100%;overflow:hidden;background:#2d8a4e;font-family:
 <body>
 <canvas id="webglCanvas"></canvas>
 <canvas id="gameCanvas"></canvas>
+<input type="text" id="seedInput" placeholder="随机" maxlength="12" autocomplete="off" style="position:absolute;left:50%;transform:translateX(-50%);width:160px;height:44px;padding:0 16px;font-size:16px;font-family:'Segoe UI',sans-serif;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.3);border-radius:10px;color:#fff;outline:none;z-index:10;transition:all 0.2s;box-sizing:border-box;display:none;text-align:center;" onfocus="this.style.background='rgba(255,255,255,0.15)';this.style.borderColor='rgba(255,51,102,0.8)';" onblur="this.style.background='rgba(255,255,255,0.08)';this.style.borderColor='rgba(255,255,255,0.3)';">
 <script>
 // roundRect polyfill
 if (!CanvasRenderingContext2D.prototype.roundRect) {
@@ -922,10 +923,11 @@ window.addEventListener('keyup', function(e) {
 
 // Touch controls
 let touchAreas = [];
+let touchPressed = { left: false, right: false, up: false, down: false };
 function setupTouchAreas() {
     const bw = 70, bh = 65;
     const margin = 32;
-    const bottomOffset = 70;
+    const bottomOffset = 100;
     const btnGap = 5;
     // Left side: left/right (steering), Right side: up/down (gas/brake)
     touchAreas = [
@@ -1014,11 +1016,13 @@ function handleTouches(touches) {
     touchControls.right = false;
     touchControls.up = false;
     touchControls.down = false;
+    touchPressed = { left: false, right: false, up: false, down: false };
     for (let t = 0; t < touches.length; t++) {
         let tx = touches[t].clientX, ty = touches[t].clientY;
         for (let a of touchAreas) {
             if (tx >= a.x && tx <= a.x + a.w && ty >= a.y && ty <= a.y + a.h) {
                 touchControls[a.id] = true;
+                touchPressed[a.id] = true;
             }
         }
     }
@@ -1409,8 +1413,92 @@ function normalizeAngle(a) {
     while (a < -Math.PI) a += Math.PI * 2;
     return a;
 }
-function randRange(a, b) { return a + Math.random() * (b - a); }
-function randInt(a, b) { return Math.floor(randRange(a, b + 1)); }
+
+// ==================== SEEDED RANDOM GENERATOR ====================
+let currentSeed = null;
+let seedRandomState = 0;
+let useSeededRandom = false;
+
+// Simple hash function for string seeds
+function hashString(str) {
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) {
+        const char = str.charCodeAt(i);
+        hash = ((hash << 5) - hash) + char;
+        hash = hash & 0xFFFFFFFF; // Keep within 32 bits
+    }
+    return Math.abs(hash >>> 0); // Convert to unsigned 32-bit
+}
+
+// Set the seed for map generation
+function setMapSeed(seed) {
+    // Reset seed state first
+    useSeededRandom = false;
+    seedRandomState = 0;
+    
+    if (seed === null || seed === undefined || seed === '') {
+        // Generate random seed
+        seed = Math.floor(Math.random() * 1000000).toString(36).toUpperCase();
+    }
+    currentSeed = seed.toString().toUpperCase();
+    // Initialize random state from seed
+    let numericSeed = hashString(currentSeed);
+    seedRandomState = numericSeed % 2147483647;
+    if (seedRandomState <= 0) seedRandomState += 2147483646;
+    useSeededRandom = true;
+}
+
+// Set a derived seed for a specific generation step
+function setDerivedSeed(stepName) {
+    if (!currentSeed) return;
+    let combined = currentSeed + stepName;
+    let numericSeed = hashString(combined);
+    seedRandomState = numericSeed % 2147483647;
+    if (seedRandomState <= 0) seedRandomState += 2147483646;
+    console.log('Derived seed for', stepName, ':', seedRandomState);
+}
+
+// Get current map seed
+function getMapSeed() {
+    return currentSeed || 'RANDOM';
+}
+
+// Enable/disable seeded random
+function enableSeededRandom(enable) {
+    useSeededRandom = enable;
+}
+
+// Seeded random number generator (0 to 1)
+function seededRandom() {
+    seedRandomState = (seedRandomState * 16807) % 2147483647;
+    return (seedRandomState - 1) / 2147483646;
+}
+
+// Seeded random range [a, b)
+function randRange(a, b) {
+    if (useSeededRandom) {
+        return a + seededRandom() * (b - a);
+    }
+    return a + Math.random() * (b - a);
+}
+
+// Seeded random integer [a, b]
+function randInt(a, b) {
+    return Math.floor(randRange(a, b + 1));
+}
+
+// Seeded random boolean with given probability
+function randBool(prob) {
+    if (useSeededRandom) {
+        return seededRandom() < prob;
+    }
+    return Math.random() < prob;
+}
+
+// Seeded random choice: -1 or 1
+function randSign() {
+    return randBool(0.5) ? 1 : -1;
+}
 
 function segmentIntersect(ax,ay,bx,by,cx,cy,dx,dy) {
     let denom = (bx-ax)*(dy-cy) - (by-ay)*(dx-cx);
@@ -1484,16 +1572,15 @@ function pathHasIntersection(path, skipNearby) {
 }
 
 function generateSprintTrack() {
-    // Reset arc continuation state for new track
-    if (window.arcContinuation) {
-        window.arcContinuation.count = 0;
-    }
-    if (window.hairpinContinuation) {
-        window.hairpinContinuation.count = 0;
-    }
-    if (window.bigTurnContinuation) {
-        window.bigTurnContinuation.count = 0;
-    }
+    // Reset all continuation states for new track
+    window.arcContinuation = { count: 0, amount: 0 };
+    window.hairpinContinuation = { count: 0, amount: 0 };
+    window.bigTurnContinuation = { count: 0, amount: 0 };
+    window.sCurveContinuation = { count: 0, amount: 0, phase: 0 };
+    
+    // Set derived seed for track generation
+    setDerivedSeed('TRACK');
+    
     let maxAttempts = 30;
     
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
@@ -1511,12 +1598,12 @@ function generateSprintTrack() {
             nodes.push({ x: x, y: y });
             
             let segLen = randRange(600, 1000);
-            let r = Math.random();
+            let r = randRange(0, 1);
             let turnAmount;
             let isCurve = false;
-            
+
             // If we just had a curve, 25% chance to enforce a longer straight section
-            if (lastWasCurve && straightAfterCurveCount < 2 && Math.random() < 0.25) {
+            if (lastWasCurve && straightAfterCurveCount < 2 && randBool(0.25)) {
                 // Force a straight section after curve (minimum 2 segments)
                 turnAmount = 0;
                 segLen = randRange(700, 1100);
@@ -1525,7 +1612,7 @@ function generateSprintTrack() {
             }
             // Hairpin turn (发卡弯) - 12% chance
             if (r < 0.12) {
-                let hairpinDir = Math.random() < 0.5 ? 1 : -1;
+                let hairpinDir = randSign();
                 turnAmount = randRange(0.6, 0.9) * hairpinDir;
                 segLen = randRange(400, 600);
                 isCurve = true;
@@ -1543,7 +1630,7 @@ function generateSprintTrack() {
             }
             // Big 90-degree turn for square-like track (25% chance)
             else if (r < 0.37) {
-                let turnDir = Math.random() < 0.5 ? 1 : -1;
+                let turnDir = randSign();
                 turnAmount = randRange(0.8, 1.2) * turnDir; // Large turn angle
                 segLen = randRange(600, 900);
                 isCurve = true;
@@ -1561,7 +1648,7 @@ function generateSprintTrack() {
             else if (r < 0.42) {
                 // Generate a continuous arc by setting a consistent small turn
                 // This creates near-circular large radius curves
-                let arcDir = Math.random() < 0.5 ? 1 : -1;
+                let arcDir = randSign();
                 turnAmount = randRange(0.08, 0.15) * arcDir;
                 segLen = randRange(500, 800);
                 isCurve = true;
@@ -1579,7 +1666,7 @@ function generateSprintTrack() {
             }
             // S-curve pattern - realistic S-bend (first turn) - 13% chance
             else if (r < 0.55) {
-                turnAmount = randRange(0.7, 1.0) * (Math.random() < 0.5 ? 1 : -1);
+                turnAmount = randRange(0.7, 1.0) * randSign();
                 if (!window.sCurveContinuation) window.sCurveContinuation = { count: 0, amount: 0, phase: 0 };
                 window.sCurveContinuation.count = 1;
                 window.sCurveContinuation.amount = turnAmount > 0 ? 1 : -1;
@@ -1720,19 +1807,19 @@ function generateSprintTrack() {
     let curvePhase = 0;
     for (let i = 0; i < 80; i++) {
         nodes.push({ x: x, y: y });
-        
+
         // Add some curves to fallback track
         if (i % 15 === 5) {
             // S-curve turn
-            angle += randRange(0.6, 0.9) * (Math.random() < 0.5 ? 1 : -1);
+            angle += randRange(0.6, 0.9) * randSign();
         } else if (i % 15 === 10) {
             // Opposite turn
-            angle += randRange(0.6, 0.9) * (Math.random() < 0.5 ? 1 : -1);
+            angle += randRange(0.6, 0.9) * randSign();
         } else {
             // Gentle variation
             angle += randRange(-0.15, 0.15);
         }
-        
+
         x += Math.cos(angle) * 500;
         y += Math.sin(angle) * 500;
     }
@@ -1792,6 +1879,9 @@ function buildEdges(path) {
 }
 
 function generateWalls(pathLength) {
+    // Set derived seed for wall generation
+    setDerivedSeed('WALLS');
+    
     let walls = [];
     let wallCount = randInt(25, 40);
     let used = new Set();
@@ -1867,9 +1957,10 @@ function generateWalls(pathLength) {
         
         // Mark segment as used
         for (let i = start; i < start + len; i++) used.add(i);
-        
+
         // Randomly choose which side gets the wall
-        let side = Math.random() < 0.4 ? 'left' : (Math.random() < 0.5 ? 'right' : 'both');
+        let r = randRange(0, 1);
+        let side = r < 0.4 ? 'left' : (r < 0.7 ? 'right' : 'both');
         walls.push({ startIdx: start, endIdx: start + len, side: side, minIdx: start, maxIdx: start + len });
     }
     return walls;
@@ -1945,6 +2036,182 @@ function generateTrack() {
     generateScenery();
     computeMinimapBounds();
     buildWebGLTrackData();
+    preprocessTrack(trackPath);
+}
+
+function preprocessTrack(trackPath) {
+    for (let i = 0; i < trackPath.length; i++) {
+        let p = trackPath[i];
+        let next = trackPath[Math.min(i + 1, trackPath.length - 1)];
+        let dx = next.x - p.x;
+        let dy = next.y - p.y;
+        p.dir = Math.atan2(dy, dx);
+        let look = trackPath[Math.min(i + 6, trackPath.length - 1)];
+        let d = angleDiff(p.dir, look.dir);
+        p.curvature = Math.abs(d);
+    }
+}
+
+function updateClosestPath(car) {
+    let bestIdx = car.currentPathIdx;
+    let bestDist = Infinity;
+    for (let i = -5; i <= 5; i++) {
+        let idx = clamp(car.currentPathIdx + i, 0, trackPath.length - 1);
+        let dx = car.x - trackPath[idx].x;
+        let dy = car.y - trackPath[idx].y;
+        let d = dx * dx + dy * dy;
+        if (d < bestDist) {
+            bestDist = d;
+            bestIdx = idx;
+        }
+    }
+    car.currentPathIdx = bestIdx;
+}
+
+function computeDrivingTarget(car) {
+    let speedRatio = car.speed / car.maxSpeed;
+    let currentIdx = car.currentPathIdx;
+    
+    let lookAheadDist = 3 + Math.floor(speedRatio * 3);
+    let targetIdx = Math.min(currentIdx + lookAheadDist, trackPath.length - 1);
+    
+    let offset = car.laneOffset * TRACK_WIDTH * 0.2;
+    let target = trackPath[targetIdx];
+    let tx = target.x - Math.sin(target.dir) * offset;
+    let ty = target.y + Math.cos(target.dir) * offset;
+    return { x: tx, y: ty, idx: targetIdx };
+}
+
+function computeTargetSpeed(car, targetIdx) {
+    let curve = trackPath[targetIdx].curvature;
+    let curveFactor = clamp(1 - curve * 1.2, 0.6, 1);
+    let skillFactor = lerp(0.9, 1.05, car.skill);
+    return car.maxSpeed * curveFactor * skillFactor;
+}
+
+function checkCollisionBox(car, other, boxLength, boxWidth, offsetX, offsetY) {
+    let cosDir = Math.cos(car.direction);
+    let sinDir = Math.sin(car.direction);
+    
+    let boxCenterX = car.x + cosDir * offsetX - sinDir * offsetY;
+    let boxCenterY = car.y + sinDir * offsetX + cosDir * offsetY;
+    
+    let dx = other.x - boxCenterX;
+    let dy = other.y - boxCenterY;
+    
+    let localX = dx * cosDir + dy * sinDir;
+    let localY = -dx * sinDir + dy * cosDir;
+    
+    return Math.abs(localX) < boxLength / 2 + other.length / 2 &&
+           Math.abs(localY) < boxWidth / 2 + other.width / 2;
+}
+
+function computeOvertaking(car, dt) {
+    if (!car.overtakeState) {
+        car.overtakeState = 'none';
+        car.overtakeTargetLane = 0;
+        car.overtakeTimer = 0;
+    }
+    
+    car.overtakeTimer += dt;
+    
+    if (car.overtakeState === 'changing') {
+        if (Math.abs(car.laneOffset - car.overtakeTargetLane) < 0.2) {
+            car.overtakeState = 'overtaking';
+        }
+        return { overtaking: true, targetLane: car.overtakeTargetLane, blocked: true };
+    }
+    
+    if (car.overtakeState === 'overtaking') {
+        let frontCar = null;
+        for (let other of cars) {
+            if (other === car) continue;
+            if (checkCollisionBox(car, other, 120, 60, 60, 0)) {
+                frontCar = other;
+                break;
+            }
+        }
+        
+        if (!frontCar && car.overtakeTimer > 2.0) {
+            car.overtakeState = 'returning';
+        } else if (car.overtakeTimer > 4.0) {
+            car.overtakeState = 'returning';
+        }
+        return { overtaking: true, targetLane: car.overtakeTargetLane, blocked: true };
+    }
+    
+    if (car.overtakeState === 'returning') {
+        if (Math.abs(car.laneOffset) < 0.2) {
+            car.overtakeState = 'none';
+            car.overtakeTargetLane = 0;
+        }
+        return { overtaking: false, targetLane: 0, blocked: false };
+    }
+    
+    let frontCar = null;
+    for (let other of cars) {
+        if (other === car) continue;
+        if (checkCollisionBox(car, other, 250, 60, 125, 0)) {
+            if (car.speed > other.speed) {
+                frontCar = other;
+                break;
+            }
+        }
+    }
+    
+    if (!frontCar) {
+        return { overtaking: false, targetLane: 0, blocked: false };
+    }
+    
+    let leftClear = true;
+    let rightClear = true;
+    
+    for (let other of cars) {
+        if (other === car || other === frontCar) continue;
+        if (checkCollisionBox(car, other, 150, 100, 75, 50)) {
+            leftClear = false;
+        }
+        if (checkCollisionBox(car, other, 150, 100, 75, -50)) {
+            rightClear = false;
+        }
+    }
+    
+    let targetLane = 0;
+    if (leftClear) {
+        targetLane = 1;
+    } else if (rightClear) {
+        targetLane = -1;
+    } else {
+        return { overtaking: false, targetLane: 0, blocked: true };
+    }
+    
+    car.overtakeState = 'changing';
+    car.overtakeTargetLane = targetLane;
+    car.overtakeTimer = 0;
+    return { overtaking: true, targetLane: targetLane, blocked: true };
+}
+
+function updateLaneDecision(car, overtakeData, dt) {
+    let maxLaneOffset = 1.0;
+    
+    if (overtakeData.overtaking) {
+        car.targetLaneOffset = clamp(overtakeData.targetLane, -maxLaneOffset, maxLaneOffset);
+    } else if (!overtakeData.blocked) {
+        car.targetLaneOffset = 0;
+    }
+    
+    let lerpSpeed = overtakeData.overtaking ? 0.15 : 0.08;
+    car.laneOffset += (car.targetLaneOffset - car.laneOffset) * lerpSpeed;
+    car.laneOffset = clamp(car.laneOffset, -maxLaneOffset, maxLaneOffset);
+}
+
+function updateFarNPC(car, dt) {
+    car.currentPathIdx += Math.floor(car.speed * 0.5);
+    car.currentPathIdx = clamp(car.currentPathIdx, 0, trackPath.length - 1);
+    let p = trackPath[car.currentPathIdx];
+    car.x = p.x;
+    car.y = p.y;
+    car.direction = p.dir;
 }
 
 // ==================== MINIMAP BOUNDS ====================
@@ -2003,6 +2270,9 @@ const BRANCH_CACHE_SIZE = 100;
 const BRANCH_CACHE_MAX_AGE = 5;
 
 function generateBranches() {
+    // Set derived seed for branch generation
+    setDerivedSeed('BRANCHES');
+    
     branchPaths = [];
     branchBounds = [];
     let totalPts = trackPath.length;
@@ -2021,7 +2291,7 @@ function generateBranches() {
             if (tooClose) continue;
 
             let sp = trackPath[startIdx];
-            let side = Math.random() < 0.5 ? 1 : -1;
+            let side = randSign();
             let branchNodes = [];
 
             let rejoinIdx = Math.min(startIdx + randInt(50, 120), totalPts - 30);
@@ -2178,6 +2448,11 @@ function generateScenery() {
     sceneryItems = [];
     let step = Math.max(1, Math.floor(trackPath.length / 1200));
 
+    // Disable seeded random for scenery (trees, lakes, people are not seed-controlled)
+    let wasSeeded = useSeededRandom;
+    let savedSeedState = seedRandomState;
+    enableSeededRandom(false);
+
     // First pass: generate lakes only
     for (let i = 0; i < trackPath.length; i += step * 3) {
         let p = trackPath[i];
@@ -2243,6 +2518,10 @@ function generateScenery() {
             }
         }
     }
+    
+    // Restore seeded random state
+    enableSeededRandom(wasSeeded);
+    seedRandomState = savedSeedState;
 
     // Safety pass: remove any tree/people that ended up overlapping road or branch - return to pool
     let safeItems = [];
@@ -2610,16 +2889,16 @@ function createCar(color, isPlayer) {
         speed: 0,
         direction: 0,
         visualAngle: 0,
-        steeringInput: 0, // smoothed steering for linear delay
+        steeringInput: 0,
         width: CAR_WIDTH,
         length: CAR_LENGTH,
         color: color,
         isPlayer: isPlayer,
         isNPC: !isPlayer,
-        maxSpeed: isPlayer ? 10.0 : randRange(5.5, 11.0), // Increased for 220 max speed (10.0 corresponds to 220 km/h)
-        acceleration: isPlayer ? 0.08 : randRange(0.05, 0.09),
+        maxSpeed: isPlayer ? 10.0 : randRange(5.5, 11.0),
+        acceleration: isPlayer ? 0.08 : 0.25,
         braking: 0.10,
-        turnRate: isPlayer ? 0.05 : 0.055,
+        turnRate: isPlayer ? 0.05 : 0.05,
         friction: 0.995,
         offTrackFriction: 0.98,
         currentPathIdx: 0,
@@ -2631,7 +2910,14 @@ function createCar(color, isPlayer) {
         collisionCooldown: 0,
         collisionPenalty: 0,
         avoidPlayer: Math.random() < 0.3,
-        npcSteerInput: 0
+        npcSteerInput: 0,
+        laneOffset: 0,
+        targetLaneOffset: 0,
+        skill: Math.random(),
+        blockedTimer: 0,
+        overtakeState: 'none',
+        overtakeTargetLane: 0,
+        overtakeTimer: 0
     };
 }
 
@@ -2700,7 +2986,7 @@ function spawnNPCNearPlayer() {
     let placed = false;
 
     for (let attempt = 0; attempt < 6; attempt++) {
-        let isBehind = Math.random() >= 0.7; // 30% spawn behind player
+        let isBehind = !randBool(0.7); // 30% spawn behind player
         if (!isBehind) {
             let idxOffset = Math.floor(forwardDist / 10) + randInt(-20, 20);
             spawnIdx = Math.min(playerIdx + idxOffset, pathLength - 50);
@@ -2969,7 +3255,6 @@ const NPC_SIMPLE_DISTANCE = 800;
 function updateNPC(car, dt, isPlayerNearby) {
     if (car.collisionCooldown > 0) car.collisionCooldown -= dt;
     
-    // Apply finish line slowdown for NPCs only after they finish
     if (car.finished) {
         let elapsed = raceTime - car.finishTime;
         
@@ -3005,7 +3290,6 @@ function updateNPC(car, dt, isPlayerNearby) {
         }
     }
     
-    // Skip update if player is too far
     if (!isPlayerNearby) {
         let closest = findClosestTrackPoint(car.x, car.y);
         car.currentPathIdx = closest.index;
@@ -3041,156 +3325,86 @@ function updateNPC(car, dt, isPlayerNearby) {
         return;
     }
 
-    let closest = findClosestTrackPoint(car.x, car.y);
-    car.currentPathIdx = closest.index;
-    
-    let trackDist = getTrackDistance(car.x, car.y, closest.index);
-    let absTrackDist = Math.abs(trackDist);
-    let onTrack = absTrackDist < TRACK_WIDTH / 2;
-    if (!onTrack) onTrack = isOnBranch(car.x, car.y);
+    updateClosestPath(car);
+    let target = computeDrivingTarget(car);
+    let overtakeData = computeOvertaking(car, dt);
+    updateLaneDecision(car, overtakeData, dt);
+
+    let dx = target.x - car.x;
+    let dy = target.y - car.y;
+    let targetAngle = Math.atan2(dy, dx);
+    let steerAngle = angleDiff(car.direction, targetAngle);
+
     let speedRatio = Math.abs(car.speed) / car.maxSpeed;
-
-    let currentTrackPoint = trackPath[closest.index];
-    let trackDirection = currentTrackPoint.dir;
-    let steerAngle = angleDiff(car.direction, trackDirection);
+    let currentCurvature = trackPath[car.currentPathIdx].curvature;
     
-    let lookAhead = Math.floor(6 + speedRatio * 12);
-    let targetIdx = Math.min(closest.index + lookAhead, trackPath.length - 1);
-    let target = trackPath[targetIdx];
+    let isOvertaking = Math.abs(car.laneOffset) > 0.1;
     
-    let lookAheadAngle = angleDiff(car.direction, target.dir);
-    steerAngle = steerAngle * 0.6 + lookAheadAngle * 0.4;
-
-    let lateralDist = trackDist;
-    let lateralCorrection = -lateralDist / (TRACK_WIDTH * 0.5) * 0.15;
-
-    let avoidAngle = 0;
-    let avoidStrength = 0;
-    let blockedAhead = false;
-    let blockedTime = 0;
-    
-    for (let other of cars) {
-        if (other === car) continue;
-        if (other.isPlayer && !car.avoidPlayer) continue;
-        let odx = other.x - car.x;
-        let ody = other.y - car.y;
-        let dist = Math.sqrt(odx * odx + ody * ody);
-        
-        if (dist < 150 && dist > 0.1) {
-            let angleToOther = Math.atan2(ody, odx);
-            let relAngle = angleDiff(car.direction, angleToOther);
-            
-            if (Math.abs(relAngle) < Math.PI * 0.6) {
-                let factor = (150 - dist) / 150;
-                avoidStrength = Math.max(avoidStrength, factor);
-                
-                if (dist < 100 && Math.abs(relAngle) < Math.PI * 0.4) {
-                    blockedAhead = true;
-                    if (!car.blockedTimer) car.blockedTimer = 0;
-                    car.blockedTimer += 1/60;
-                    
-                    if (car.blockedTimer > 0.5) {
-                        let trackDist = getTrackDistance(car.x, car.y, closest.index);
-                        let leftSpace = true;
-                        let rightSpace = true;
-                        
-                        for (let checkCar of cars) {
-                            if (checkCar === car || checkCar === other) continue;
-                            let cdx = checkCar.x - car.x;
-                            let cdy = checkCar.y - car.y;
-                            let cdist = Math.sqrt(cdx * cdx + cdy * cdy);
-                            if (cdist < 120) {
-                                let cAngleTo = Math.atan2(cdy, cdx);
-                                let cRelAngle = angleDiff(car.direction, cAngleTo);
-                                if (cRelAngle > 0.3 && cRelAngle < Math.PI * 0.5) leftSpace = false;
-                                if (cRelAngle < -0.3 && cRelAngle > -Math.PI * 0.5) rightSpace = false;
-                            }
-                        }
-                        
-                        let overtakingDirection = 0;
-                        if (leftSpace && !rightSpace) {
-                            overtakingDirection = 1;
-                        } else if (rightSpace && !leftSpace) {
-                            overtakingDirection = -1;
-                        } else if (leftSpace && rightSpace) {
-                            overtakingDirection = trackDist > 0 ? 1 : -1;
-                        }
-                        
-                        if (overtakingDirection !== 0) {
-                            avoidAngle += overtakingDirection * 1.2;
-                            avoidStrength = Math.max(avoidStrength, 0.8);
-                        }
-                    }
-                }
-                
-                if (relAngle > 0) {
-                    avoidAngle -= factor * 0.5;
-                } else {
-                    avoidAngle += factor * 0.5;
-                }
-            }
-            
-            if (dist < 80 && Math.abs(relAngle) < Math.PI * 0.3) {
-                car.speed *= 0.95;
-            }
-        }
+    let maxTurn;
+    if (isOvertaking) {
+        maxTurn = car.turnRate * Math.max(0.6, speedRatio * 1.0);
+    } else {
+        maxTurn = car.turnRate * Math.max(0.35, speedRatio * 0.8);
     }
     
-    if (!blockedAhead) {
-        car.blockedTimer = 0;
+    let steerInput = clamp(steerAngle / maxTurn, -1, 1);
+    
+    if (Math.abs(steerAngle) > 0.05) {
+        let boost = isOvertaking ? 0.6 : 0.3;
+        steerInput = Math.sign(steerInput) * Math.min(1, Math.abs(steerInput) + boost);
     }
 
-    if (!onTrack) {
-        let trackCenter = trackPath[closest.index];
-        let toCenterAngle = Math.atan2(trackCenter.y - car.y, trackCenter.x - car.x);
-        steerAngle = angleDiff(car.direction, toCenterAngle);
-    }
-
-    let maxTurn = car.turnRate * Math.max(0.3, speedRatio);
-    let desiredTurn = steerAngle * 0.5 + lateralCorrection + avoidAngle * avoidStrength;
-    
-    let targetSteerInput = clamp(desiredTurn / maxTurn, -1, 1);
-    
-    let steerSmooth = 0.12;
-    car.npcSteerInput += (targetSteerInput - car.npcSteerInput) * steerSmooth;
-    
-    let turnAmount = car.npcSteerInput * maxTurn;
-    car.direction += turnAmount;
+    let steerSmooth = isOvertaking ? 0.25 : 0.15;
+    car.npcSteerInput += (steerInput - car.npcSteerInput) * steerSmooth;
+    car.direction += car.npcSteerInput * maxTurn;
     car.direction = normalizeAngle(car.direction);
 
-    let targetSpeed = car.maxSpeed * 0.7;
-    if (car.speed < targetSpeed) car.speed += car.acceleration * 0.5;
-    else car.speed *= 0.99;
+    let targetSpeed = computeTargetSpeed(car, target.idx);
+    
+    if (overtakeData.blocked && !overtakeData.overtaking) {
+        targetSpeed *= 0.6;
+    }
+    
+    let speedDiff = targetSpeed - car.speed;
+    if (speedDiff > 0) {
+        car.speed += Math.min(car.acceleration * 0.5, speedDiff * 0.1);
+    } else {
+        car.speed *= 0.98;
+    }
     car.speed = clamp(car.speed, 0, car.maxSpeed);
 
     car.x += Math.cos(car.direction) * car.speed;
     car.y += Math.sin(car.direction) * car.speed;
 
+    let ad = angleDiff(car.visualAngle, car.direction);
+    car.visualAngle += ad * 0.2;
+
+    let closestIdx = car.currentPathIdx;
+    let trackDist = getTrackDistance(car.x, car.y, closestIdx);
+    let absTrackDist = Math.abs(trackDist);
+    let onTrack = absTrackDist < TRACK_WIDTH / 2;
+    if (!onTrack) onTrack = isOnBranch(car.x, car.y);
+
     if (!onTrack) {
         car.speed *= car.offTrackFriction;
     }
 
-    let ad = angleDiff(car.visualAngle, car.direction);
-    car.visualAngle += ad * 0.2;
-
-    let absDist = Math.abs(getTrackDistance(car.x, car.y, closest.index));
     let halfW = TRACK_WIDTH / 2;
-
-    if (absDist > halfW + 30) {
-        let p = trackPath[closest.index];
-        let pushDir = getTrackDistance(car.x, car.y, closest.index) > 0 ? -1 : 1;
-        let pushAmount = Math.min((absDist - halfW) * 0.08, 5);
+    if (absTrackDist > halfW + 20) {
+        let p = trackPath[closestIdx];
+        let pushDir = trackDist > 0 ? -1 : 1;
+        let pushAmount = Math.min((absTrackDist - halfW) * 0.05, 3);
         car.x += p.nx * pushDir * pushAmount;
         car.y += p.ny * pushDir * pushAmount;
-        car.speed *= 0.97;
     }
 
-    if (absDist > TRACK_WIDTH * 3) {
-        let p = trackPath[closest.index];
-        car.x = p.x;
-        car.y = p.y;
+    if (absTrackDist > TRACK_WIDTH * 2) {
+        let p = trackPath[closestIdx];
+        let offset = (Math.random() - 0.5) * TRACK_WIDTH * 0.4;
+        car.x = p.x - Math.sin(p.dir) * offset;
+        car.y = p.y + Math.cos(p.dir) * offset;
         car.direction = p.dir;
-        car.speed *= 0.3;
+        car.speed = car.maxSpeed * 0.5;
     }
 }
 
@@ -4571,6 +4785,13 @@ function drawHUD() {
     ctx.closePath();
     ctx.fill();
 
+    // --- Map Seed at bottom left ---
+    let seedText = '种子: ' + getMapSeed();
+    ctx.font = '11px sans-serif';
+    ctx.fillStyle = 'rgba(255,255,255,0.5)';
+    ctx.textAlign = 'left';
+    ctx.fillText(seedText, 16, H - 16);
+
     drawTouchControls();
     ctx.restore();
 }
@@ -4578,23 +4799,46 @@ function drawHUD() {
 function drawTouchControls() {
     if (!('ontouchstart' in window)) return;
     setupTouchAreas();
-    ctx.globalAlpha = 0.5;
     for (let a of touchAreas) {
-        ctx.fillStyle = 'rgba(255,255,255,0.35)';
-        ctx.strokeStyle = 'rgba(255,255,255,0.7)';
-        ctx.lineWidth = 2;
+        let isPressed = touchPressed[a.id];
+        
+        // Button background - brighter when pressed
+        if (isPressed) {
+            ctx.fillStyle = 'rgba(255,255,255,0.6)';
+        } else {
+            ctx.fillStyle = 'rgba(255,255,255,0.25)';
+        }
+        
         ctx.beginPath();
         roundRect(ctx, a.x, a.y, a.w, a.h, 10);
         ctx.fill();
+        
+        // Inner border (inset stroke effect)
+        let borderWidth = isPressed ? 3 : 2;
+        let borderColor = isPressed ? 'rgba(255,255,255,0.95)' : 'rgba(255,255,255,0.6)';
+        ctx.strokeStyle = borderColor;
+        ctx.lineWidth = borderWidth;
+        
+        ctx.beginPath();
+        roundRect(ctx, a.x + borderWidth, a.y + borderWidth, a.w - borderWidth * 2, a.h - borderWidth * 2, 8);
         ctx.stroke();
+        
+        // Inner glow effect when pressed
+        if (isPressed) {
+            ctx.fillStyle = 'rgba(255,255,255,0.3)';
+            ctx.beginPath();
+            roundRect(ctx, a.x + 6, a.y + 6, a.w - 12, a.h - 12, 6);
+            ctx.fill();
+        }
 
-        ctx.fillStyle = '#fff';
-        ctx.font = '20px sans-serif';
+        // Button label
+        ctx.fillStyle = isPressed ? '#fff' : 'rgba(255,255,255,0.9)';
+        ctx.font = isPressed ? 'bold 22px sans-serif' : '20px sans-serif';
         ctx.textAlign = 'center';
         let labels = { up: '▲', down: '▼', left: '◀', right: '▶' };
-        ctx.fillText(labels[a.id], a.x + a.w / 2, a.y + a.h / 2 + 7);
+        let labelY = a.y + a.h / 2 + 7;
+        ctx.fillText(labels[a.id], a.x + a.w / 2, labelY);
     }
-    ctx.globalAlpha = 1;
 }
 
 function formatTime(t) {
@@ -4800,11 +5044,40 @@ function drawMenu() {
     ctx.fillRect(-4, -8, 8, 5);
     ctx.restore();
 
-    // Single start button
+    // Seed input label
+    let seedLabelY = H * 0.48;
+    ctx.font = '12px sans-serif';
+    ctx.fillStyle = COLORS.textSecondary;
+    ctx.textAlign = 'center';
+    ctx.fillText('地图种子', W / 2, seedLabelY);
+
+    // Seed input box (positioned via CSS, but we draw a background here)
+    let seedInputY = H * 0.50;
+    let seedInputW = 160;
+    let seedInputH = 44;
+    let seedInputX = W / 2 - seedInputW / 2;
+
+    // Update seed input position
+    let seedInput = document.getElementById('seedInput');
+    if (seedInput) {
+        seedInput.style.display = 'block';
+        seedInput.style.top = seedInputY + 'px';
+    }
+
+    // Draw seed input background/border on canvas (for visual consistency)
+    ctx.fillStyle = 'rgba(255,255,255,0.08)';
+    ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    roundRect(ctx, seedInputX, seedInputY, seedInputW, seedInputH, 10);
+    ctx.fill();
+    ctx.stroke();
+
+    // Single start button (moved down)
     let btnW = 280;
     let btnH = 72;
     let bx = W / 2 - btnW / 2;
-    let by = H * 0.50;
+    let by = H * 0.60;
 
     menuButtonRects = [{ x: bx, y: by, w: btnW, h: btnH }];
 
@@ -4894,6 +5167,10 @@ function drawCountdown() {
 
 // ==================== LOADING ====================
 function drawLoading() {
+    // Hide seed input
+    let seedInput = document.getElementById('seedInput');
+    if (seedInput) seedInput.style.display = 'none';
+    
     ctx.fillStyle = COLORS.menuBg;
     ctx.fillRect(0, 0, W, H);
     
@@ -4996,10 +5273,17 @@ function drawResults() {
         ctx.fillText(s.value, W/2 + 145, y + 6);
     }
 
+    // Map Seed display
+    let seedY = statsY + stats.length * rowH + 15;
+    ctx.font = '12px sans-serif';
+    ctx.fillStyle = COLORS.textLight;
+    ctx.textAlign = 'center';
+    ctx.fillText('地图种子: ' + getMapSeed(), W / 2, seedY);
+
     // Two buttons (removed report button)
     let btnW = 160, btnH = 50, btnGap = 20;
     let totalBtnW = btnW * 2 + btnGap;
-    let btnY = statsY + stats.length * rowH + 30;
+    let btnY = seedY + 35;
     let btn1X = W/2 - totalBtnW/2, btn2X = btn1X + btnW + btnGap;
 
     resultButtonRects = [
@@ -5048,6 +5332,13 @@ function startGame() {
     loadingStartTime = performance.now();
     showExitConfirm = false;
     
+    // Set map seed from input or generate random
+    let seedInput = document.getElementById('seedInput');
+    let seedValue = seedInput ? seedInput.value.trim() : '';
+    console.log('Input seed value:', seedValue);
+    setMapSeed(seedValue || null);
+    console.log('Final seed:', currentSeed, 'State:', seedRandomState);
+    
     // Use setTimeout to allow loading screen to render
     setTimeout(function() {
         loadingProgress = 0.2;
@@ -5084,6 +5375,7 @@ function startGame() {
         computeMinimapBounds();
         prerenderMinimapTrack();
         buildWebGLTrackData();
+        preprocessTrack(trackPath);
         loadingProgress = 0.85;
     }, 300);
     
@@ -5156,6 +5448,10 @@ function update(dt) {
     if (gameState !== 'racing') return;
 
     raceTime += dt;
+
+    // Dynamic NPC spawning/despawning - MUST be before NPC updates
+    // so newly spawned NPCs are included in collision detection
+    updateNPCSpawning();
 
     // Update player
     if (player) {
@@ -5303,9 +5599,6 @@ function update(dt) {
 
     // Particles
     updateParticles();
-
-    // Dynamic NPC spawning/despawning
-    updateNPCSpawning();
 
     // Camera
     updateCamera();
