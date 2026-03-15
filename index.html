@@ -14,7 +14,7 @@ html,body{width:100%;height:100%;overflow:hidden;background:#2d8a4e;font-family:
 <body>
 <canvas id="webglCanvas"></canvas>
 <canvas id="gameCanvas"></canvas>
-<input type="text" id="seedInput" placeholder="随机" maxlength="12" autocomplete="off" style="position:absolute;left:50%;transform:translateX(-50%);width:160px;height:44px;padding:0 16px;font-size:16px;font-family:'Segoe UI',sans-serif;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.3);border-radius:10px;color:#fff;outline:none;z-index:10;transition:all 0.2s;box-sizing:border-box;display:none;text-align:center;" onfocus="this.style.background='rgba(255,255,255,0.15)';this.style.borderColor='rgba(255,51,102,0.8)';" onblur="this.style.background='rgba(255,255,255,0.08)';this.style.borderColor='rgba(255,255,255,0.3)';">
+<input type="text" id="seedInput" placeholder="随机" maxlength="12" autocomplete="off" style="position:absolute;left:50%;transform:translateX(-50%);width:160px;height:44px;padding:0 16px;font-size:16px;font-family:'Segoe UI',sans-serif;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.3);border-radius:10px;color:#fff;outline:none;z-index:10;transition:all 0.2s;box-sizing:border-box;display:none;text-align:center;" onfocus="this.style.background='rgba(255,255,255,0.15)';this.style.borderColor='rgba(255,51,102,0.8)';hideStartButtonForMobileInput();" onblur="this.style.background='rgba(255,255,255,0.08)';this.style.borderColor='rgba(255,255,255,0.3)';showStartButtonForMobileInput();" oninput="limitSeedInput(this)">
 <script>
 // roundRect polyfill
 if (!CanvasRenderingContext2D.prototype.roundRect) {
@@ -676,6 +676,32 @@ let additionalVisibleSegments = []; // segments visible due to track folding bac
 // Input
 let keys = {};
 let touchControls = { left: false, right: false, up: false, down: false };
+let isMobileInputActive = false;
+let showNPCs = true; // NPC display toggle
+
+// Seed input limit function
+function limitSeedInput(input) {
+    // Limit to alphanumeric characters only
+    input.value = input.value.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+    // Enforce maxlength
+    if (input.value.length > 12) {
+        input.value = input.value.substring(0, 12);
+    }
+}
+
+// Hide start button when mobile input is focused
+function hideStartButtonForMobileInput() {
+    if ('ontouchstart' in window) {
+        isMobileInputActive = true;
+    }
+}
+
+// Show start button when mobile input is blurred
+function showStartButtonForMobileInput() {
+    if ('ontouchstart' in window) {
+        isMobileInputActive = false;
+    }
+}
 
 // Audio
 let audioCtx = null;
@@ -950,7 +976,11 @@ canvas.addEventListener('touchstart', function(e) {
             for (let i = 0; i < menuButtonRects.length; i++) {
                 let b = menuButtonRects[i];
                 if (tx >= b.x && tx <= b.x + b.w && ty >= b.y && ty <= b.y + b.h) {
-                    startGame();
+                    if (b.type === 'npcSwitch') {
+                        showNPCs = !showNPCs;
+                    } else {
+                        startGame();
+                    }
                 }
             }
         }
@@ -1036,7 +1066,11 @@ canvas.addEventListener('click', function(e) {
         for (let i = 0; i < menuButtonRects.length; i++) {
             let b = menuButtonRects[i];
             if (mx >= b.x && mx <= b.x + b.w && my >= b.y && my <= b.y + b.h) {
-                startGame();
+                if (b.type === 'npcSwitch') {
+                    showNPCs = !showNPCs;
+                } else {
+                    startGame();
+                }
             }
         }
     }
@@ -5044,24 +5078,31 @@ function drawMenu() {
     ctx.fillRect(-4, -8, 8, 5);
     ctx.restore();
 
-    // Seed input label
-    let seedLabelY = H * 0.48;
-    ctx.font = '12px sans-serif';
-    ctx.fillStyle = COLORS.textSecondary;
-    ctx.textAlign = 'center';
-    ctx.fillText('地图种子', W / 2, seedLabelY);
+    // Single start button dimensions (for alignment reference)
+    let btnW = 280;
+    let btnH = 72;
+    let bx = W / 2 - btnW / 2;
+    let by = H * 0.60;
 
-    // Seed input box (positioned via CSS, but we draw a background here)
-    let seedInputY = H * 0.50;
+    // Seed input section
+    let seedInputY = H * 0.495;
     let seedInputW = 160;
     let seedInputH = 44;
-    let seedInputX = W / 2 - seedInputW / 2;
+    let seedInputX = bx; // Align with start button left edge
+    let seedLabelY = seedInputY - 10;
+    
+    // Seed input label - centered above input
+    ctx.font = '16px sans-serif';
+    ctx.fillStyle = COLORS.textSecondary;
+    ctx.textAlign = 'center';
+    ctx.fillText('地图种子', seedInputX + seedInputW / 2, seedLabelY);
 
     // Update seed input position
     let seedInput = document.getElementById('seedInput');
     if (seedInput) {
         seedInput.style.display = 'block';
         seedInput.style.top = seedInputY + 'px';
+        seedInput.style.left = (seedInputX + seedInputW / 2) + 'px';
     }
 
     // Draw seed input background/border on canvas (for visual consistency)
@@ -5073,47 +5114,86 @@ function drawMenu() {
     ctx.fill();
     ctx.stroke();
 
-    // Single start button (moved down)
-    let btnW = 280;
-    let btnH = 72;
-    let bx = W / 2 - btnW / 2;
-    let by = H * 0.60;
+    // NPC toggle switch (right of seed input, aligned with start button right edge)
+    let switchW = 100;
+    let switchH = seedInputH; // Same height as seed input
+    let switchX = bx + btnW - switchW;
+    let switchY = seedInputY;
+    let switchLabelY = seedLabelY;
+    
+    // NPC label - centered above switch
+    ctx.font = '16px sans-serif';
+    ctx.fillStyle = COLORS.textSecondary;
+    ctx.textAlign = 'center';
+    ctx.fillText(showNPCs ? 'NPC：开' : 'NPC：关', switchX + switchW / 2, switchLabelY);
 
-    menuButtonRects = [{ x: bx, y: by, w: btnW, h: btnH }];
-
-    let isHover = (menuSelection === 0);
-    let btnColor = COLORS.accent;
-
-    if (isHover) {
-        ctx.fillStyle = 'rgba(255,51,102,0.2)';
-        ctx.beginPath();
-        roundRect(ctx, bx, by, btnW, btnH, 14);
-        ctx.fill();
-    }
-
-    ctx.strokeStyle = 'rgba(255,51,102,' + (isHover ? 0.9 : 0.4) + ')';
-    ctx.lineWidth = isHover ? 2.5 : 1.5;
+    // Draw switch track (background)
+    ctx.fillStyle = showNPCs ? 'rgba(0,230,118,0.2)' : 'rgba(255,51,102,0.2)';
     ctx.beginPath();
-    roundRect(ctx, bx, by, btnW, btnH, 14);
+    roundRect(ctx, switchX, switchY, switchW, switchH, switchH / 2);
+    ctx.fill();
+    
+    ctx.strokeStyle = showNPCs ? 'rgba(0,230,118,0.6)' : 'rgba(255,51,102,0.6)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    roundRect(ctx, switchX, switchY, switchW, switchH, switchH / 2);
     ctx.stroke();
 
-    ctx.fillStyle = btnColor;
+    // Draw switch thumb (circle)
+    let thumbSize = switchH - 8;
+    let thumbX = showNPCs ? switchX + switchW - thumbSize - 4 : switchX + 4;
+    let thumbY = switchY + 4;
+    ctx.fillStyle = showNPCs ? '#00e676' : '#ff3366';
     ctx.beginPath();
-    roundRect(ctx, bx, by + 10, 4, btnH - 20, 2);
+    ctx.arc(thumbX + thumbSize / 2, thumbY + thumbSize / 2, thumbSize / 2, 0, Math.PI * 2);
     ctx.fill();
+    
+    // Add glow effect to thumb
+    ctx.shadowColor = showNPCs ? '#00e676' : '#ff3366';
+    ctx.shadowBlur = 8;
+    ctx.beginPath();
+    ctx.arc(thumbX + thumbSize / 2, thumbY + thumbSize / 2, thumbSize / 2 - 2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.shadowBlur = 0;
 
-    ctx.font = 'bold 22px sans-serif';
-    ctx.fillStyle = isHover ? btnColor : '#ffffff';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText('开始游戏', W / 2, by + btnH / 2);
-    ctx.textBaseline = 'alphabetic';
+    // Initialize button rects array
+    menuButtonRects = [{ x: switchX, y: switchY, w: switchW, h: switchH, type: 'npcSwitch' }];
 
-    // Keyboard hints
-    ctx.textAlign = 'center';
-    ctx.font = '14px sans-serif';
-    ctx.fillStyle = COLORS.textLight;
-    ctx.fillText('按 回车/空格 开始  |  方向键/WASD 控制  |  支持触屏', W / 2, by + btnH + 36);
+    // Single start button (moved down) - hide on mobile when input is active
+    if (!isMobileInputActive) {
+        menuButtonRects.push({ x: bx, y: by, w: btnW, h: btnH, type: 'start' });
+
+        let isHover = (menuSelection === 0);
+        let btnColor = COLORS.accent;
+
+        if (isHover) {
+            ctx.fillStyle = 'rgba(255,51,102,0.2)';
+            ctx.beginPath();
+            roundRect(ctx, bx, by, btnW, btnH, 14);
+            ctx.fill();
+        }
+
+        ctx.strokeStyle = 'rgba(255,51,102,' + (isHover ? 0.9 : 0.4) + ')';
+        ctx.lineWidth = isHover ? 2.5 : 1.5;
+        ctx.beginPath();
+        roundRect(ctx, bx, by, btnW, btnH, 14);
+        ctx.stroke();
+
+        ctx.fillStyle = btnColor;
+        ctx.beginPath();
+        roundRect(ctx, bx, by + 10, 4, btnH - 20, 2);
+        ctx.fill();
+
+        ctx.font = 'bold 22px sans-serif';
+        ctx.fillStyle = isHover ? btnColor : '#ffffff';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('开始游戏', W / 2, by + btnH / 2);
+        ctx.textBaseline = 'alphabetic';
+    } else {
+        // Clear button rects when hidden
+        menuButtonRects = [];
+    }
 }
 
 // ==================== COUNTDOWN ====================
@@ -5273,17 +5353,10 @@ function drawResults() {
         ctx.fillText(s.value, W/2 + 145, y + 6);
     }
 
-    // Map Seed display
-    let seedY = statsY + stats.length * rowH + 15;
-    ctx.font = '12px sans-serif';
-    ctx.fillStyle = COLORS.textLight;
-    ctx.textAlign = 'center';
-    ctx.fillText('地图种子: ' + getMapSeed(), W / 2, seedY);
-
     // Two buttons (removed report button)
     let btnW = 160, btnH = 50, btnGap = 20;
     let totalBtnW = btnW * 2 + btnGap;
-    let btnY = seedY + 35;
+    let btnY = statsY + stats.length * rowH + 25;
     let btn1X = W/2 - totalBtnW/2, btn2X = btn1X + btnW + btnGap;
 
     resultButtonRects = [
@@ -5320,9 +5393,12 @@ function drawResults() {
     }
     ctx.textBaseline = 'alphabetic';
 
+    // Map Seed display (below buttons, white color)
+    let seedY = btnY + btnH + 30;
     ctx.font = '13px sans-serif';
-    ctx.fillStyle = COLORS.textLight;
-    ctx.fillText('按 1 返回主页  |  按 2 继续驾驶', W / 2, btnY + btnH + 30);
+    ctx.fillStyle = '#ffffff';
+    ctx.textAlign = 'center';
+    ctx.fillText('地图种子: ' + getMapSeed(), W / 2, seedY);
 }
 
 // ==================== GAME LOGIC ====================
@@ -5649,7 +5725,10 @@ function render() {
         return say - sby;
     });
     for (let car of window.sortedCars) {
-        drawCar(car);
+        // Only draw NPC cars if showNPCs is true, always draw player
+        if (car.isPlayer || showNPCs) {
+            drawCar(car);
+        }
     }
 
     // HUD
