@@ -659,6 +659,7 @@ let homeButtonRect = null;
 let showExitConfirm = false;
 let playerPrevX = 0, playerPrevY = 0;
 let lastCountdownBeep = -1; // track which countdown number last beeped
+let lastMouseX = 0, lastMouseY = 0; // track mouse position for hover effects
 
 // Camera
 let camera = { x: 0, y: 0, angle: 0, targetAngle: 0, swayOffset: 0, viewBounds: { minX: 0, maxX: 0, minY: 0, maxY: 0 } };
@@ -700,6 +701,14 @@ function hideStartButtonForMobileInput() {
 function showStartButtonForMobileInput() {
     if ('ontouchstart' in window) {
         isMobileInputActive = false;
+    }
+}
+
+// Clear seed input when returning to menu
+function clearSeedInput() {
+    let seedInput = document.getElementById('seedInput');
+    if (seedInput) {
+        seedInput.value = '';
     }
 }
 
@@ -934,13 +943,7 @@ window.addEventListener('keydown', function(e) {
     }
     initAudio();
 
-    if (gameState === 'menu') {
-        if (e.code === 'Enter' || e.code === 'Space') startGame();
-    }
-    if (gameState === 'results' || finishResultsShown) {
-        if (e.code === 'Digit1' || e.code === 'Numpad1') { stopGameSounds(); gameState = 'menu'; finishResultsShown = false; }
-        if (e.code === 'Digit2' || e.code === 'Numpad2') continueDriving();
-    }
+    // Keyboard controls removed - UI now only supports mouse/touch
 });
 
 window.addEventListener('keyup', function(e) {
@@ -1026,6 +1029,7 @@ canvas.addEventListener('touchstart', function(e) {
                 showExitConfirm = false;
                 stopGameSounds();
                 gameState = 'menu';
+                clearSeedInput();
             }
         }
         return;
@@ -1036,7 +1040,7 @@ canvas.addEventListener('touchstart', function(e) {
             for (let i = 0; i < resultButtonRects.length; i++) {
                 let b = resultButtonRects[i];
                 if (tx >= b.x && tx <= b.x + b.w && ty >= b.y && ty <= b.y + b.h) {
-                    if (i === 0) { stopGameSounds(); gameState = 'menu'; finishResultsShown = false; }
+                    if (i === 0) { stopGameSounds(); gameState = 'menu'; finishResultsShown = false; clearSeedInput(); }
                     else if (i === 1) continueDriving();
                 }
             }
@@ -1125,6 +1129,7 @@ canvas.addEventListener('click', function(e) {
             showExitConfirm = false;
             stopGameSounds();
             gameState = 'menu';
+            clearSeedInput();
         }
         return;
     }
@@ -1133,7 +1138,7 @@ canvas.addEventListener('click', function(e) {
         for (let i = 0; i < resultButtonRects.length; i++) {
             let b = resultButtonRects[i];
             if (mx >= b.x && mx <= b.x + b.w && my >= b.y && my <= b.y + b.h) {
-                if (i === 0) { stopGameSounds(); gameState = 'menu'; finishResultsShown = false; }
+                if (i === 0) { stopGameSounds(); gameState = 'menu'; finishResultsShown = false; clearSeedInput(); }
                 else if (i === 1) continueDriving();
             }
         }
@@ -1141,9 +1146,27 @@ canvas.addEventListener('click', function(e) {
 });
 
 canvas.addEventListener('mousemove', function(e) {
+    let mx = e.clientX, my = e.clientY;
+    lastMouseX = mx;
+    lastMouseY = my;
+    menuSelection = -1;
+    
+    // Exit confirmation dialog hover detection
+    if (showExitConfirm) {
+        let btnW = 100, btnH = 40;
+        let btnY = H / 2 + 30;
+        let btn1X = W / 2 - btnW - 15;
+        let btn2X = W / 2 + 15;
+        
+        if (mx >= btn1X && mx <= btn1X + btnW && my >= btnY && my <= btnY + btnH) {
+            menuSelection = 0; // Cancel button
+        } else if (mx >= btn2X && mx <= btn2X + btnW && my >= btnY && my <= btnY + btnH) {
+            menuSelection = 1; // Confirm button
+        }
+        return;
+    }
+    
     if (gameState === 'menu' || gameState === 'results' || finishResultsShown) {
-        let mx = e.clientX, my = e.clientY;
-        menuSelection = -1;
         let rects = gameState === 'menu' ? menuButtonRects : resultButtonRects;
         if (finishResultsShown && gameState === 'racing') rects = resultButtonRects;
         for (let i = 0; i < rects.length; i++) {
@@ -4575,13 +4598,36 @@ let startLineCorners = [
 
 function drawStartFinishLine(pathIdx) {
     if (pathIdx < 0 || pathIdx >= trackPath.length) return;
-    let p = trackPath[pathIdx];
     let halfW = TRACK_WIDTH / 2;
     let checks = 8;
     let checkSize = TRACK_WIDTH / checks;
     let lineDepth = checkSize * 0.6;
 
-    let pnx = p.nx, pny = p.ny, pdir = p.dir;
+    // Calculate average direction and normal from nearby points for better accuracy on curves
+    let avgDir = 0, avgNx = 0, avgNy = 0;
+    let sampleCount = 0;
+    let sampleRadius = 10; // Sample points within this radius
+    
+    for (let i = Math.max(0, pathIdx - sampleRadius); i <= Math.min(trackPath.length - 1, pathIdx + sampleRadius); i++) {
+        avgDir += trackPath[i].dir;
+        avgNx += trackPath[i].nx;
+        avgNy += trackPath[i].ny;
+        sampleCount++;
+    }
+    
+    avgDir /= sampleCount;
+    avgNx /= sampleCount;
+    avgNy /= sampleCount;
+    
+    // Normalize the averaged normal
+    let normLen = Math.sqrt(avgNx * avgNx + avgNy * avgNy);
+    if (normLen > 0.001) {
+        avgNx /= normLen;
+        avgNy /= normLen;
+    }
+
+    let p = trackPath[pathIdx];
+    let pnx = avgNx, pny = avgNy, pdir = avgDir;
     let cdir = Math.cos(pdir), sdir = Math.sin(pdir);
     let camX = camera.x, camY = camera.y;
     let camCos = cameraTransform.cos, camSin = cameraTransform.sin;
@@ -4842,14 +4888,28 @@ function drawHUD() {
     let btnY = H - 40;
     homeButtonRect = { x: btnX - btnR, y: btnY - btnR, w: btnR * 2, h: btnR * 2 };
     
-    ctx.strokeStyle = 'rgba(255,255,255,0.6)';
-    ctx.lineWidth = 2;
+    // Check hover state
+    let mx = lastMouseX || 0;
+    let my = lastMouseY || 0;
+    let isHomeHover = (mx >= homeButtonRect.x && mx <= homeButtonRect.x + homeButtonRect.w &&
+                       my >= homeButtonRect.y && my <= homeButtonRect.y + homeButtonRect.h);
+    
+    // Button background on hover
+    if (isHomeHover) {
+        ctx.fillStyle = 'rgba(255,255,255,0.15)';
+        ctx.beginPath();
+        ctx.arc(btnX, btnY, btnR, 0, Math.PI * 2);
+        ctx.fill();
+    }
+    
+    ctx.strokeStyle = isHomeHover ? 'rgba(255,255,255,0.9)' : 'rgba(255,255,255,0.6)';
+    ctx.lineWidth = isHomeHover ? 2.5 : 2;
     ctx.beginPath();
     ctx.arc(btnX, btnY, btnR, 0, Math.PI * 2);
     ctx.stroke();
     
     // Home icon (house shape) - filled white
-    ctx.fillStyle = 'rgba(255,255,255,0.8)';
+    ctx.fillStyle = isHomeHover ? '#ffffff' : 'rgba(255,255,255,0.8)';
     ctx.beginPath();
     ctx.moveTo(btnX, btnY - 9);
     ctx.lineTo(btnX - 10, btnY - 1);
@@ -5171,6 +5231,7 @@ function drawMenu() {
 
     // Draw switch track (background) - pill shape with perfect circular ends
     let halfH = switchH / 2;
+    let isSwitchHover = (menuSelection === 1); // NPC switch is index 1
     ctx.fillStyle = showNPCs ? 'rgba(0,230,118,0.2)' : 'rgba(255,51,102,0.2)';
     ctx.beginPath();
     ctx.arc(switchX + halfH, switchY + halfH, halfH, Math.PI / 2, Math.PI * 1.5);
@@ -5178,8 +5239,10 @@ function drawMenu() {
     ctx.closePath();
     ctx.fill();
     
-    ctx.strokeStyle = showNPCs ? 'rgba(0,230,118,0.6)' : 'rgba(255,51,102,0.6)';
-    ctx.lineWidth = 1;
+    ctx.strokeStyle = showNPCs ? 
+        (isSwitchHover ? 'rgba(0,230,118,0.9)' : 'rgba(0,230,118,0.6)') : 
+        (isSwitchHover ? 'rgba(255,51,102,0.9)' : 'rgba(255,51,102,0.6)');
+    ctx.lineWidth = isSwitchHover ? 2 : 1;
     ctx.beginPath();
     ctx.arc(switchX + halfH, switchY + halfH, halfH, Math.PI / 2, Math.PI * 1.5);
     ctx.arc(switchX + switchW - halfH, switchY + halfH, halfH, Math.PI * 1.5, Math.PI / 2);
@@ -5203,9 +5266,9 @@ function drawMenu() {
     ctx.fill();
     ctx.shadowBlur = 0;
 
-    // Initialize button rects array
-    menuButtonRects = [{ x: switchX, y: switchY, w: switchW, h: switchH, type: 'npcSwitch' }];
-
+    // Initialize button rects array - start button first, then NPC switch
+    menuButtonRects = [];
+    
     // Single start button (moved down) - hide on mobile when input is active
     if (!isMobileInputActive) {
         menuButtonRects.push({ x: bx, y: by, w: btnW, h: btnH, type: 'start' });
@@ -5237,10 +5300,10 @@ function drawMenu() {
         ctx.textBaseline = 'middle';
         ctx.fillText('开始游戏', W / 2, by + btnH / 2);
         ctx.textBaseline = 'alphabetic';
-    } else {
-        // Clear button rects when hidden
-        menuButtonRects = [];
     }
+    
+    // Always add NPC switch to button rects (it's always visible)
+    menuButtonRects.push({ x: switchX, y: switchY, w: switchW, h: switchH, type: 'npcSwitch' });
 }
 
 // ==================== COUNTDOWN ====================
@@ -5619,6 +5682,41 @@ function update(dt) {
         }
     }
 
+    // NPC-to-NPC elastic push - helps create overtaking space
+    // Only between NPCs (not player), using car dimensions as detection range
+    for (let i = 0; i < cars.length; i++) {
+        let a = cars[i];
+        if (a.isPlayer) continue;
+        
+        for (let j = i + 1; j < cars.length; j++) {
+            let b = cars[j];
+            if (b.isPlayer) continue;
+            
+            let dx = b.x - a.x;
+            let dy = b.y - a.y;
+            let distSq = dx * dx + dy * dy;
+            
+            // Detection range: car length + width (approximate car size)
+            let detectionRange = (CAR_LENGTH + CAR_WIDTH) * 0.6;
+            let detectionRangeSq = detectionRange * detectionRange;
+            
+            if (distSq < detectionRangeSq && distSq > 0.01) {
+                let d = Math.sqrt(distSq);
+                let nx = dx / d;
+                let ny = dy / d;
+                
+                // Simple elastic push - push both cars apart linearly
+                let pushDistance = (detectionRange - d) * 0.5;
+                pushDistance = Math.min(pushDistance, 3); // Max push per frame
+                
+                a.x -= nx * pushDistance;
+                a.y -= ny * pushDistance;
+                b.x += nx * pushDistance;
+                b.y += ny * pushDistance;
+            }
+        }
+    }
+
     // Car-to-car collisions - direct iteration without creating new array
     if (cars.length > 1 && player) {
         for (let i = 0; i < cars.length; i++) {
@@ -5827,9 +5925,14 @@ function drawExitConfirm() {
     let btn1X = W / 2 - btnW - 15;
     let btn2X = W / 2 + 15;
 
+    // Check hover state for buttons (using menuSelection for simplicity)
+    let isCancelHover = menuSelection === 0;
+    let isConfirmHover = menuSelection === 1;
+
     // Cancel button
-    ctx.fillStyle = 'rgba(255,255,255,0.1)';
-    ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+    ctx.fillStyle = isCancelHover ? 'rgba(255,255,255,0.2)' : 'rgba(255,255,255,0.1)';
+    ctx.strokeStyle = isCancelHover ? 'rgba(255,255,255,0.5)' : 'rgba(255,255,255,0.3)';
+    ctx.lineWidth = isCancelHover ? 2 : 1;
     ctx.beginPath();
     roundRect(ctx, btn1X, btnY, btnW, btnH, 8);
     ctx.fill();
@@ -5839,13 +5942,14 @@ function drawExitConfirm() {
     ctx.fillText('取消', btn1X + btnW / 2, btnY + btnH / 2);
 
     // Confirm button
-    ctx.fillStyle = 'rgba(231,76,60,0.3)';
-    ctx.strokeStyle = 'rgba(231,76,60,0.8)';
+    ctx.fillStyle = isConfirmHover ? 'rgba(231,76,60,0.5)' : 'rgba(231,76,60,0.3)';
+    ctx.strokeStyle = isConfirmHover ? 'rgba(231,76,60,1)' : 'rgba(231,76,60,0.8)';
+    ctx.lineWidth = isConfirmHover ? 2 : 1;
     ctx.beginPath();
     roundRect(ctx, btn2X, btnY, btnW, btnH, 8);
     ctx.fill();
     ctx.stroke();
-    ctx.fillStyle = '#e74c3c';
+    ctx.fillStyle = isConfirmHover ? '#ff6b6b' : '#e74c3c';
     ctx.fillText('结束', btn2X + btnW / 2, btnY + btnH / 2);
     
     ctx.textBaseline = 'alphabetic';
