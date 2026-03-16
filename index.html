@@ -65,8 +65,6 @@ const COLORS = {
     branchSurface: '#3a3a4a',
     trackEdge: '#ffffff',
     centerLine: '#ffd166',
-    wallColor: '#ff6b6b',
-    wallEdge: '#cc4444',
     playerCar: '#ff3366',
     npcCars: ['#00d4ff', '#00e676', '#ffab00', '#b388ff', '#ff80ab', '#ff9ff3', '#48dbfb', '#feca57', '#ff6348', '#c8d6e5'],
     shadow: 'rgba(0,0,0,0.3)',
@@ -212,8 +210,6 @@ let edgePositions = [];
 let edgeColors = [];
 let centerLinePositions = [];
 let centerLineColors = [];
-let wallPositions = [];
-let wallColors = [];
 
 function hexToRgb(hex) {
     const r = parseInt(hex.slice(1, 3), 16) / 255;
@@ -245,14 +241,11 @@ function buildWebGLTrackData() {
     edgeColors = [];
     centerLinePositions = [];
     centerLineColors = [];
-    wallPositions = [];
-    wallColors = [];
     
     buildTrackSurface();
     buildBranchSurfaces();
     buildRoadEdges();
     buildCenterLine();
-    buildWalls();
 }
 
 function buildTrackSurface() {
@@ -496,65 +489,7 @@ function buildCenterLine() {
     }
 }
 
-function buildWalls() {
-    const wallColor = hexToRgb(COLORS.wallColor);
-    const wallEdgeColor = hexToRgb(COLORS.wallEdge);
-    const wallThickness = 8;
-    
-    for (let wall of trackWalls) {
-        for (let i = wall.startIdx; i < wall.endIdx && i < trackPath.length - 1; i++) {
-            if (wall.side === 'left' || wall.side === 'both') {
-                const wp1 = trackLeftEdge[i];
-                const wp2 = trackLeftEdge[i + 1];
-                const p = trackPath[i];
-                const p2 = trackPath[i + 1];
-                
-                const wo1x = wp1.x + p.nx * wallThickness;
-                const wo1y = wp1.y + p.ny * wallThickness;
-                const wo2x = wp2.x + p2.nx * wallThickness;
-                const wo2y = wp2.y + p2.ny * wallThickness;
-                
-                wallPositions.push(
-                    wp1.x, wp1.y,
-                    wp2.x, wp2.y,
-                    wo2x, wo2y,
-                    wp1.x, wp1.y,
-                    wo2x, wo2y,
-                    wo1x, wo1y
-                );
-                
-                for (let j = 0; j < 6; j++) {
-                    wallColors.push(...wallColor);
-                }
-            }
-            
-            if (wall.side === 'right' || wall.side === 'both') {
-                const wp1 = trackRightEdge[i];
-                const wp2 = trackRightEdge[i + 1];
-                const p = trackPath[i];
-                const p2 = trackPath[i + 1];
-                
-                const wo1x = wp1.x - p.nx * wallThickness;
-                const wo1y = wp1.y - p.ny * wallThickness;
-                const wo2x = wp2.x - p2.nx * wallThickness;
-                const wo2y = wp2.y - p2.ny * wallThickness;
-                
-                wallPositions.push(
-                    wp1.x, wp1.y,
-                    wp2.x, wp2.y,
-                    wo2x, wo2y,
-                    wp1.x, wp1.y,
-                    wo2x, wo2y,
-                    wo1x, wo1y
-                );
-                
-                for (let j = 0; j < 6; j++) {
-                    wallColors.push(...wallColor);
-                }
-            }
-        }
-    }
-}
+
 
 // ==================== WEBGL RENDERING ====================
 function renderWebGL() {
@@ -591,14 +526,7 @@ function renderWebGL() {
         gl.drawArrays(gl.TRIANGLES, 0, edgePositions.length / 2);
     }
     
-    // Draw walls
-    if (wallPositions.length > 0) {
-        gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
-        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(wallPositions), gl.DYNAMIC_DRAW);
-        gl.bindBuffer(gl.ARRAY_BUFFER, colorBuffer);
-        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(wallColors), gl.DYNAMIC_DRAW);
-        gl.drawArrays(gl.TRIANGLES, 0, wallPositions.length / 2);
-    }
+
     
     // Draw branch surfaces using TRIANGLES (to avoid TRIANGLE_STRIP issues)
     if (branchSurfacePositions.length > 0) {
@@ -638,7 +566,6 @@ let trackNodes = [];
 let trackPath = [];
 let trackLeftEdge = [];
 let trackRightEdge = [];
-let trackWalls = [];
 let branchPaths = []; // {path, leftEdge, rightEdge}
 let totalDistance = 0;
 let sceneryItems = []; // trees, lakes, people
@@ -953,6 +880,7 @@ window.addEventListener('keyup', function(e) {
 // Touch controls
 let touchAreas = [];
 let touchPressed = { left: false, right: false, up: false, down: false };
+let activeTouches = {}; // Track active touches by identifier
 function setupTouchAreas() {
     const bw = 70, bh = 65;
     const margin = 32;
@@ -971,7 +899,15 @@ setupTouchAreas();
 canvas.addEventListener('touchstart', function(e) {
     e.preventDefault();
     initAudio();
-    handleTouches(e.touches);
+    // Add new touches to activeTouches with their positions
+    for (let t = 0; t < e.changedTouches.length; t++) {
+        let touch = e.changedTouches[t];
+        activeTouches[touch.identifier] = {
+            x: touch.clientX,
+            y: touch.clientY
+        };
+    }
+    recalculateTouchState();
     // Menu clicks
     if (gameState === 'menu') {
         for (let t = 0; t < e.touches.length; t++) {
@@ -1050,13 +986,56 @@ canvas.addEventListener('touchstart', function(e) {
 
 canvas.addEventListener('touchmove', function(e) {
     e.preventDefault();
-    handleTouches(e.touches);
+    // Update positions of active touches
+    for (let t = 0; t < e.changedTouches.length; t++) {
+        let touch = e.changedTouches[t];
+        if (activeTouches[touch.identifier] !== undefined) {
+            activeTouches[touch.identifier].x = touch.clientX;
+            activeTouches[touch.identifier].y = touch.clientY;
+        }
+    }
+    recalculateTouchState();
 }, { passive: false });
 
 canvas.addEventListener('touchend', function(e) {
     e.preventDefault();
-    handleTouches(e.touches);
+    // Remove ended touches from activeTouches
+    for (let t = 0; t < e.changedTouches.length; t++) {
+        delete activeTouches[e.changedTouches[t].identifier];
+    }
+    // Recalculate touch state from remaining active touches
+    recalculateTouchState();
 }, { passive: false });
+
+canvas.addEventListener('touchcancel', function(e) {
+    e.preventDefault();
+    // Cancel all touches
+    activeTouches = {};
+    recalculateTouchState();
+}, { passive: false });
+
+function recalculateTouchState() {
+    touchControls.left = false;
+    touchControls.right = false;
+    touchControls.up = false;
+    touchControls.down = false;
+    touchPressed = { left: false, right: false, up: false, down: false };
+    
+    // Re-setup touch areas to account for possible resize
+    setupTouchAreas();
+    
+    // Check each active touch
+    for (let id in activeTouches) {
+        let touch = activeTouches[id];
+        let tx = touch.x, ty = touch.y;
+        for (let a of touchAreas) {
+            if (tx >= a.x && tx <= a.x + a.w && ty >= a.y && ty <= a.y + a.h) {
+                touchControls[a.id] = true;
+                touchPressed[a.id] = true;
+            }
+        }
+    }
+}
 
 function handleTouches(touches) {
     touchControls.left = false;
@@ -1961,93 +1940,7 @@ function buildEdges(path) {
     return { left, right };
 }
 
-function generateWalls(pathLength) {
-    // Set derived seed for wall generation
-    setDerivedSeed('WALLS');
-    
-    let walls = [];
-    let wallCount = randInt(25, 40);
-    let used = new Set();
-    let branchZones = [];
-    
-    // Create exclusion zones around branch connections (wider zones)
-    for (let bp of branchPaths) {
-        if (bp.startIdx) {
-            // Start connection zone - avoid walls 80 points before and after for cleaner connection
-            branchZones.push({ 
-                start: Math.max(0, bp.startIdx - 80), 
-                end: Math.min(pathLength, bp.startIdx + 80) 
-            });
-        }
-        if (bp.endIdx) {
-            // End connection zone - avoid walls 80 points before and after
-            branchZones.push({ 
-                start: Math.max(0, bp.endIdx - 80), 
-                end: Math.min(pathLength, bp.endIdx + 80) 
-            });
-        }
-    }
-    
-    // Detect self-intersections in the main track
-    let selfIntersectionZones = detectSelfIntersections(pathLength);
-    
-    // Also avoid the very start and end of the track
-    let startExclude = { start: 0, end: Math.min(pathLength, 60) };
-    let endExclude = { start: Math.max(0, pathLength - 60), end: pathLength };
-    
-    let attempts = 0;
-    while (walls.length < wallCount && attempts < wallCount * 5) {
-        attempts++;
-        let len = randInt(15, 50);
-        let start = randInt(10, pathLength - len - 10);
-        let overlap = false;
-        
-        // Check if overlaps with used segments
-        for (let i = start; i < start + len; i++) {
-            if (used.has(i)) { overlap = true; break; }
-        }
-        if (overlap) continue;
-        
-        // Check if overlaps with start exclusion zone
-        if (start < startExclude.end && start + len > startExclude.start) {
-            overlap = true;
-            continue;
-        }
-        
-        // Check if overlaps with end exclusion zone
-        if (start < endExclude.end && start + len > endExclude.start) {
-            overlap = true;
-            continue;
-        }
-        
-        // Check if overlaps with branch connection zones
-        for (let bz of branchZones) {
-            if (start < bz.end && start + len > bz.start) { 
-                overlap = true; 
-                break; 
-            }
-        }
-        if (overlap) continue;
-        
-        // Check if overlaps with self-intersection zones
-        for (let sz of selfIntersectionZones) {
-            if (start < sz.end && start + len > sz.start) {
-                overlap = true;
-                break;
-            }
-        }
-        if (overlap) continue;
-        
-        // Mark segment as used
-        for (let i = start; i < start + len; i++) used.add(i);
 
-        // Randomly choose which side gets the wall
-        let r = randRange(0, 1);
-        let side = r < 0.4 ? 'left' : (r < 0.7 ? 'right' : 'both');
-        walls.push({ startIdx: start, endIdx: start + len, side: side, minIdx: start, maxIdx: start + len });
-    }
-    return walls;
-}
 
 // Detect self-intersections in the main track and return exclusion zones
 function detectSelfIntersections(pathLength) {
@@ -2115,7 +2008,6 @@ function generateTrack() {
     generateBranches();
     buildBranchGrid();
     selfIntersectionZones = detectSelfIntersections(trackPath.length);
-    trackWalls = generateWalls(trackPath.length);
     generateScenery();
     computeMinimapBounds();
     buildWebGLTrackData();
@@ -2277,13 +2169,13 @@ function computeOvertaking(car, dt) {
 function updateLaneDecision(car, overtakeData, dt) {
     let maxLaneOffset = 1.0;
     
-    if (overtakeData.overtaking) {
+    if (overtakeData.overtaking || car.overtakeState === 'returning') {
         car.targetLaneOffset = clamp(overtakeData.targetLane, -maxLaneOffset, maxLaneOffset);
     } else if (!overtakeData.blocked) {
         car.targetLaneOffset = 0;
     }
     
-    let lerpSpeed = overtakeData.overtaking ? 0.15 : 0.08;
+    let lerpSpeed = (overtakeData.overtaking || car.overtakeState === 'returning') ? 0.15 : 0.08;
     car.laneOffset += (car.targetLaneOffset - car.laneOffset) * lerpSpeed;
     car.laneOffset = clamp(car.laneOffset, -maxLaneOffset, maxLaneOffset);
 }
@@ -3425,9 +3317,9 @@ function updateNPC(car, dt, isPlayerNearby) {
     }
 
     updateClosestPath(car);
-    let target = computeDrivingTarget(car);
     let overtakeData = computeOvertaking(car, dt);
     updateLaneDecision(car, overtakeData, dt);
+    let target = computeDrivingTarget(car);
 
     let dx = target.x - car.x;
     let dy = target.y - car.y;
@@ -3507,82 +3399,7 @@ function updateNPC(car, dt, isPlayerNearby) {
     }
 }
 
-// ==================== WALL COLLISION (SMOOTH BOUNCE - MATCHES CAR-CAR) ====================
-function checkWallCollision(car) {
-    if (isOnBranch(car.x, car.y)) return;
-    
-    // Skip wall collision in self-intersection zones
-    if (isInSelfIntersectionZone(car.x, car.y, 10)) return;
 
-    let closest = findClosestTrackPoint(car.x, car.y);
-    let idx = closest.index;
-    let halfW = TRACK_WIDTH / 2;
-    let trackDist = getTrackDistance(car.x, car.y, idx);
-    let absDist = Math.abs(trackDist);
-
-    if (absDist < halfW - 10) return;
-
-    // Iterate all walls without creating filtered array
-    let carIdx = car.currentPathIdx;
-    for (let wall of trackWalls) {
-        // Skip walls too far from car
-        if (carIdx > 0 && (carIdx < wall.minIdx - 50 || carIdx > wall.maxIdx + 50)) continue;
-        
-        if (idx >= wall.startIdx && idx <= wall.endIdx) {
-            let wallApplies = false;
-            if (wall.side === 'both') wallApplies = true;
-            else if (wall.side === 'left' && trackDist > 0) wallApplies = true;
-            else if (wall.side === 'right' && trackDist < 0) wallApplies = true;
-
-            if (wallApplies && absDist > halfW - 12) {
-                let p = trackPath[idx];
-                let nx = trackDist > 0 ? -p.nx : p.nx;
-                let ny = trackDist > 0 ? -p.ny : p.ny;
-
-                let overlap = absDist - (halfW - 14);
-                let pushStrength = Math.min(overlap * 0.4, 3);
-                car.x += nx * pushStrength;
-                car.y += ny * pushStrength;
-
-                let vx = Math.cos(car.direction) * car.speed;
-                let vy = Math.sin(car.direction) * car.speed;
-                let dotN = vx * nx + vy * ny;
-
-                if (dotN < 0) {
-                    let restitution = 0.35;
-                    let impulse = -(1 + restitution) * dotN;
-                    impulse = Math.min(impulse, 2.5);
-
-                    vx += impulse * nx;
-                    vy += impulse * ny;
-
-                    let newDir = Math.atan2(vy, vx);
-                    let newSpeed = Math.sqrt(vx * vx + vy * vy);
-
-                    let blendFactor = 0.5;
-                    car.direction = car.direction + angleDiff(car.direction, newDir) * blendFactor;
-                    car.direction = normalizeAngle(car.direction);
-
-                    car.speed = lerp(Math.abs(car.speed), newSpeed, 0.5) * (car.speed >= 0 ? 1 : -1);
-                    car.speed *= 0.75; // moderate speed loss on wall hit
-                    car.speed = clamp(car.speed, -car.maxSpeed, car.maxSpeed);
-                    car.collisionPenalty = 0.6; // seconds of reduced acceleration
-                }
-
-                if (car.collisionCooldown <= 0) {
-                    playWallSound();
-                    car.collisionCooldown = 0.1;
-                }
-
-                let maxWallSparks = Math.min(3, MAX_SPARKS - particleCounts.spark);
-                for (let s = 0; s < maxWallSparks; s++) {
-                    spawnSpark(car.x - nx * 5, car.y - ny * 5);
-                }
-                return;
-            }
-        }
-    }
-}
 
 // ==================== TRACK BOUNDARY (SOFT PUSH-BACK) ====================
 function isOnBranch(x, y) {
@@ -3732,13 +3549,30 @@ function resolveCarCollisions() {
                 let nx = dx / d;
                 let ny = dy / d;
 
-                // Strong separation to prevent sticking
+                // Calculate collision direction relative to car A
+                let aCos = Math.cos(a.direction);
+                let aSin = Math.sin(a.direction);
+                // Forward component: positive = front collision, negative = rear collision
+                let forwardDot = nx * aCos + ny * aSin;
+                // Side component: absolute value indicates side collision
+                let sideDot = Math.abs(-nx * aSin + ny * aCos);
+
+                // Determine if this is a side collision (side component > forward component)
+                let isSideCollision = sideDot > Math.abs(forwardDot);
+
+                // Side collision has 1/4 the push effect of front/rear collision
                 let overlap = minDist - d;
-                let pushStrength = Math.max(overlap * 0.6, 2);
-                a.x -= nx * pushStrength;
-                a.y -= ny * pushStrength;
-                b.x += nx * pushStrength;
-                b.y += ny * pushStrength;
+                
+                // Position push strength (separation distance)
+                let posPushStrength = Math.max(overlap * 0.6, 2);
+                if (isSideCollision) {
+                    posPushStrength *= 0.25; // Reduce side position push to 1/4
+                }
+                
+                a.x -= nx * posPushStrength;
+                a.y -= ny * posPushStrength;
+                b.x += nx * posPushStrength;
+                b.y += ny * posPushStrength;
 
                 // Velocity components along normal
                 let avx = Math.cos(a.direction) * a.speed;
@@ -3755,6 +3589,11 @@ function resolveCarCollisions() {
                     let restitution = 0.6;
                     let impulse = (1 + restitution) * Math.max(relVel, 0.5) / 2;
                     impulse = clamp(impulse, 1.0, 4.0);
+                    
+                    // Reduce velocity impulse for side collisions
+                    if (isSideCollision) {
+                        impulse *= 0.25;
+                    }
 
                     avx -= impulse * nx;
                     avy -= impulse * ny;
@@ -3825,53 +3664,176 @@ function checkSceneryCollision(car) {
         let item = nearby[i];
         if (item.type === 'lake') continue;
 
-        let dx = car.x - item.x;
-        let dy = car.y - item.y;
+        // Use fixed minimum collision radius for all trees (size 20 * 0.45 = 9)
+        let itemRadius = item.type === 'tree' ? 20 * 0.45 : 12;
 
-        let collisionRadius = item.type === 'tree' ? item.size * 0.45 : 12;
-        let checkRadius = collisionRadius + 10;
+        let collided = false;
+        let collisionX = item.x;
+        let collisionY = item.y;
 
-        // Early exit if too far
-        if (Math.abs(dx) > checkRadius || Math.abs(dy) > checkRadius) continue;
+        // Player uses two-circle (capsule) collision for better rectangular approximation
+        if (car.isPlayer) {
+            let result = checkTwoCircleCollision(car, item.x, item.y, itemRadius);
+            collided = result.collided;
+            if (collided) {
+                collisionX = result.closestX;
+                collisionY = result.closestY;
+            }
+        } else {
+            // NPC uses simple circular collision
+            let dx = car.x - item.x;
+            let dy = car.y - item.y;
+            let checkRadius = itemRadius + 10;
+            if (Math.abs(dx) > checkRadius || Math.abs(dy) > checkRadius) continue;
+            let dist = Math.sqrt(dx * dx + dy * dy);
+            if (dist < itemRadius + 8 && dist > 0.01) {
+                collided = true;
+                collisionX = car.x - dx;
+                collisionY = car.y - dy;
+            }
+        }
 
-        // Now do precise distance check
-        let dist = Math.sqrt(dx * dx + dy * dy);
-        if (dist < collisionRadius + 8 && dist > 0.01) {
-            let nx = dx / dist;
-            let ny = dy / dist;
-            let overlap = collisionRadius + 8 - dist;
-            let pushStrength = Math.min(overlap * 0.4, 3);
+        if (collided) {
+            // Calculate push direction from collision point
+            let dx = car.x - collisionX;
+            let dy = car.y - collisionY;
+            let dist = Math.sqrt(dx * dx + dy * dy);
+            let nx = dist > 0.01 ? dx / dist : 0;
+            let ny = dist > 0.01 ? dy / dist : -1;
+            
+            // Push car away from collision point
+            let pushStrength = Math.min(itemRadius * 0.4, 3);
             car.x += nx * pushStrength;
             car.y += ny * pushStrength;
-            let vx = Math.cos(car.direction) * car.speed;
-            let vy = Math.sin(car.direction) * car.speed;
-            let dotN = vx * nx + vy * ny;
-            if (dotN < 0) {
-                let restitution = 0.4;
-                let impulse = -(1 + restitution) * dotN;
-                impulse = Math.min(impulse, 3);
-                vx += impulse * nx;
-                vy += impulse * ny;
-                let newDir = Math.atan2(vy, vx);
-                let newSpeed = Math.sqrt(vx * vx + vy * vy);
-                car.direction = car.direction + angleDiff(car.direction, newDir) * 0.5;
-                car.direction = normalizeAngle(car.direction);
-                car.speed = lerp(Math.abs(car.speed), newSpeed, 0.5) * (car.speed >= 0 ? 1 : -1);
-                car.speed *= 0.75; // moderate speed loss on scenery hit
-                car.collisionPenalty = 0.5;
-            }
+            
+            // Only apply blocking effect - no bounce, just slow down
+            car.speed *= 0.5;
+            car.collisionPenalty = 0.5;
+            
+            // Only play sound and particles once per collision (using collisionCooldown)
             if (car.isPlayer && car.collisionCooldown <= 0) {
                 playWallSound();
                 car.collisionCooldown = 0.1;
-            }
-            
-            // Limit scenery spark particles
-            let maxScenerySparks = Math.min(2, MAX_SPARKS - particleCounts.spark);
-            for (let s = 0; s < maxScenerySparks; s++) {
-                spawnSpark(car.x - nx * 10, car.y - ny * 10);
+                
+                // Spawn particles only once per collision
+                let maxScenerySparks = Math.min(2, MAX_SPARKS - particleCounts.spark);
+                for (let s = 0; s < maxScenerySparks; s++) {
+                    spawnSpark(car.x - nx * 10, car.y - ny * 10);
+                }
             }
         }
     }
+}
+
+// Two-circle (capsule) collision for player car - simpler than rectangle but better shape approximation
+function checkTwoCircleCollision(car, cx, cy, itemRadius) {
+    let cos = Math.cos(car.direction);
+    let sin = Math.sin(car.direction);
+    
+    // Position of front and back circles (at car nose and tail)
+    let frontOffset = CAR_LENGTH * 0.2;
+    let backOffset = -CAR_LENGTH * 0.2;
+    let circleRadius = CAR_WIDTH * 0.5;
+    
+    // Front circle center
+    let frontX = car.x + frontOffset * cos;
+    let frontY = car.y + frontOffset * sin;
+    
+    // Back circle center
+    let backX = car.x + backOffset * cos;
+    let backY = car.y + backOffset * sin;
+    
+    // Check collision with front circle
+    let dx1 = cx - frontX;
+    let dy1 = cy - frontY;
+    let dist1Sq = dx1 * dx1 + dy1 * dy1;
+    let combinedRadius1 = circleRadius + itemRadius;
+    
+    // Check collision with back circle
+    let dx2 = cx - backX;
+    let dy2 = cy - backY;
+    let dist2Sq = dx2 * dx2 + dy2 * dy2;
+    let combinedRadius2 = circleRadius + itemRadius;
+    
+    // Use whichever circle is closer
+    if (dist1Sq < combinedRadius1 * combinedRadius1) {
+        // Collision with front circle - find closest point on circle
+        let dist1 = Math.sqrt(dist1Sq);
+        let closestX = frontX + (dx1 / dist1) * circleRadius;
+        let closestY = frontY + (dy1 / dist1) * circleRadius;
+        return { collided: true, closestX: closestX, closestY: closestY };
+    }
+    
+    if (dist2Sq < combinedRadius2 * combinedRadius2) {
+        // Collision with back circle - find closest point on circle
+        let dist2 = Math.sqrt(dist2Sq);
+        let closestX = backX + (dx2 / dist2) * circleRadius;
+        let closestY = backY + (dy2 / dist2) * circleRadius;
+        return { collided: true, closestX: closestX, closestY: closestY };
+    }
+    
+    return { collided: false, closestX: cx, closestY: cy };
+}
+
+// Check collision between two cars using two-circle (capsule) for each
+function checkCarToCarCollision(carA, carB) {
+    let cosA = Math.cos(carA.direction);
+    let sinA = Math.sin(carA.direction);
+    let cosB = Math.cos(carB.direction);
+    let sinB = Math.sin(carB.direction);
+    
+    let frontOffset = CAR_LENGTH * 0.2;
+    let backOffset = -CAR_LENGTH * 0.2;
+    let circleRadius = CAR_WIDTH * 0.5;
+    
+    // Get circles for car A
+    let aFrontX = carA.x + frontOffset * cosA;
+    let aFrontY = carA.y + frontOffset * sinA;
+    let aBackX = carA.x + backOffset * cosA;
+    let aBackY = carA.y + backOffset * sinA;
+    
+    // Get circles for car B
+    let bFrontX = carB.x + frontOffset * cosB;
+    let bFrontY = carB.y + frontOffset * sinB;
+    let bBackX = carB.x + backOffset * cosB;
+    let bBackY = carB.y + backOffset * sinB;
+    
+    let minDistSq = (circleRadius * 2) * (circleRadius * 2);
+    let collisionInfo = null;
+    
+    // Check all 4 combinations: A.front vs B.front, A.front vs B.back, A.back vs B.front, A.back vs B.back
+    let pairs = [
+        [aFrontX, aFrontY, bFrontX, bFrontY],
+        [aFrontX, aFrontY, bBackX, bBackY],
+        [aBackX, aBackY, bFrontX, bFrontY],
+        [aBackX, aBackY, bBackX, bBackY]
+    ];
+    
+    for (let pair of pairs) {
+        let dx = pair[2] - pair[0];
+        let dy = pair[3] - pair[1];
+        let distSq = dx * dx + dy * dy;
+        
+        if (distSq < minDistSq && distSq > 0.01) {
+            minDistSq = distSq;
+            let d = Math.sqrt(distSq);
+            // Closest point on A's circle
+            let closestX = pair[0] - (dx / d) * circleRadius;
+            let closestY = pair[1] - (dy / d) * circleRadius;
+            collisionInfo = {
+                dx: dx,
+                dy: dy,
+                d: d,
+                nx: dx / d,
+                ny: dy / d,
+                closestX: closestX,
+                closestY: closestY,
+                overlap: circleRadius * 2 - d
+            };
+        }
+    }
+    
+    return collisionInfo;
 }
 
 // ==================== FINISH LINE COLLISION (PHYSICAL) ====================
@@ -4453,182 +4415,57 @@ function drawCenterLine() {
     }
 }
 
-function drawWalls() {
-    let vStart = visibleTrackRange.start;
-    let vEnd = visibleTrackRange.end;
-    
-    // Collect all visible ranges including additional segments
-    let allVisibleRanges = [{ start: vStart, end: vEnd }];
-    for (let seg of additionalVisibleSegments) {
-        allVisibleRanges.push({ start: seg.start, end: seg.end });
-    }
-    
-    for (let wall of trackWalls) {
-        // Check if wall intersects any visible range
-        let isVisible = false;
-        for (let range of allVisibleRanges) {
-            if (!(wall.endIdx < range.start || wall.startIdx > range.end)) {
-                isVisible = true;
-                break;
-            }
-        }
-        if (!isVisible) continue;
 
-        // Early exit if wall is completely outside view bounds
-        let wallStartPath = trackPath[wall.startIdx];
-        let wallEndPath = trackPath[Math.min(wall.endIdx, trackPath.length - 1)];
-        if (!wallStartPath || !wallEndPath) continue;
-        
-        // Quick bounding box check against camera view
-        let wallMinX = Math.min(wallStartPath.x, wallEndPath.x) - TRACK_WIDTH;
-        let wallMaxX = Math.max(wallStartPath.x, wallEndPath.x) + TRACK_WIDTH;
-        let wallMinY = Math.min(wallStartPath.y, wallEndPath.y) - TRACK_WIDTH;
-        let wallMaxY = Math.max(wallStartPath.y, wallEndPath.y) + TRACK_WIDTH;
-        
-        if (wallMaxX < camera.viewBounds.minX - 100 || wallMinX > camera.viewBounds.maxX + 100 ||
-            wallMaxY < camera.viewBounds.minY - 100 || wallMinY > camera.viewBounds.maxY + 100) {
-            continue;
-        }
-        
-        // Clamp iteration to visible range - find the intersecting range
-        let drawStart = wall.startIdx;
-        let drawEnd = wall.endIdx;
-        for (let range of allVisibleRanges) {
-            if (!(wall.endIdx < range.start || wall.startIdx > range.end)) {
-                drawStart = Math.max(drawStart, range.start);
-                drawEnd = Math.min(drawEnd, range.end);
-            }
-        }
-        for (let i = drawStart; i < drawEnd && i < trackPath.length - 1; i++) {
-            let wallThickness = 8;
-
-            if (wall.side === 'left' || wall.side === 'both') {
-                // Calculate screen coordinates inline
-                let wp1 = trackLeftEdge[i];
-                let wp2 = trackLeftEdge[i + 1];
-                let dx1 = wp1.x - camera.x, dy1 = wp1.y - camera.y;
-                let dx2 = wp2.x - camera.x, dy2 = wp2.y - camera.y;
-                let l1x = W / 2 + (dx1 * cameraTransform.cos - dy1 * cameraTransform.sin) * VIEW_SCALE + camera.swayOffset;
-                let l1y = H * 0.6 + (dx1 * cameraTransform.sin + dy1 * cameraTransform.cos) * VIEW_SCALE;
-                let l2x = W / 2 + (dx2 * cameraTransform.cos - dy2 * cameraTransform.sin) * VIEW_SCALE + camera.swayOffset;
-                let l2y = H * 0.6 + (dx2 * cameraTransform.sin + dy2 * cameraTransform.cos) * VIEW_SCALE;
-                
-                if (!(Math.max(l1x, l2x) < -50 || Math.min(l1x, l2x) > W + 50 ||
-                      Math.max(l1y, l2y) < -50 || Math.min(l1y, l2y) > H + 50)) {
-                    let p = trackPath[i];
-                    let p2 = trackPath[i + 1];
-                    
-                    // Calculate outer wall edge
-                    let wo1x = trackLeftEdge[i].x + p.nx * wallThickness;
-                    let wo1y = trackLeftEdge[i].y + p.ny * wallThickness;
-                    let wo2x = trackLeftEdge[i+1].x + p2.nx * wallThickness;
-                    let wo2y = trackLeftEdge[i+1].y + p2.ny * wallThickness;
-                    
-                    let dx3 = wo1x - camera.x, dy3 = wo1y - camera.y;
-                    let dx4 = wo2x - camera.x, dy4 = wo2y - camera.y;
-                    let wl1x = W / 2 + (dx3 * cameraTransform.cos - dy3 * cameraTransform.sin) * VIEW_SCALE + camera.swayOffset;
-                    let wl1y = H * 0.6 + (dx3 * cameraTransform.sin + dy3 * cameraTransform.cos) * VIEW_SCALE;
-                    let wl2x = W / 2 + (dx4 * cameraTransform.cos - dy4 * cameraTransform.sin) * VIEW_SCALE + camera.swayOffset;
-                    let wl2y = H * 0.6 + (dx4 * cameraTransform.sin + dy4 * cameraTransform.cos) * VIEW_SCALE;
-
-                    ctx.fillStyle = COLORS.wallColor;
-                    ctx.beginPath();
-                    ctx.moveTo(l1x, l1y);
-                    ctx.lineTo(l2x, l2y);
-                    ctx.lineTo(wl2x, wl2y);
-                    ctx.lineTo(wl1x, wl1y);
-                    ctx.closePath();
-                    ctx.fill();
-
-                    ctx.strokeStyle = COLORS.wallEdge;
-                    ctx.lineWidth = 1;
-                    ctx.stroke();
-                }
-            }
-
-            if (wall.side === 'right' || wall.side === 'both') {
-                let wp1 = trackRightEdge[i];
-                let wp2 = trackRightEdge[i + 1];
-                let dx1 = wp1.x - camera.x, dy1 = wp1.y - camera.y;
-                let dx2 = wp2.x - camera.x, dy2 = wp2.y - camera.y;
-                let r1x = W / 2 + (dx1 * cameraTransform.cos - dy1 * cameraTransform.sin) * VIEW_SCALE + camera.swayOffset;
-                let r1y = H * 0.6 + (dx1 * cameraTransform.sin + dy1 * cameraTransform.cos) * VIEW_SCALE;
-                let r2x = W / 2 + (dx2 * cameraTransform.cos - dy2 * cameraTransform.sin) * VIEW_SCALE + camera.swayOffset;
-                let r2y = H * 0.6 + (dx2 * cameraTransform.sin + dy2 * cameraTransform.cos) * VIEW_SCALE;
-                
-                if (!(Math.max(r1x, r2x) < -50 || Math.min(r1x, r2x) > W + 50 ||
-                      Math.max(r1y, r2y) < -50 || Math.min(r1y, r2y) > H + 50)) {
-                    let p = trackPath[i];
-                    let p2t = trackPath[i + 1];
-                    
-                    let wo1x = trackRightEdge[i].x - p.nx * 8;
-                    let wo1y = trackRightEdge[i].y - p.ny * 8;
-                    let wo2x = trackRightEdge[i+1].x - p2t.nx * 8;
-                    let wo2y = trackRightEdge[i+1].y - p2t.ny * 8;
-                    
-                    let dx3 = wo1x - camera.x, dy3 = wo1y - camera.y;
-                    let dx4 = wo2x - camera.x, dy4 = wo2y - camera.y;
-                    let wr1x = W / 2 + (dx3 * cameraTransform.cos - dy3 * cameraTransform.sin) * VIEW_SCALE + camera.swayOffset;
-                    let wr1y = H * 0.6 + (dx3 * cameraTransform.sin + dy3 * cameraTransform.cos) * VIEW_SCALE;
-                    let wr2x = W / 2 + (dx4 * cameraTransform.cos - dy4 * cameraTransform.sin) * VIEW_SCALE + camera.swayOffset;
-                    let wr2y = H * 0.6 + (dx4 * cameraTransform.sin + dy4 * cameraTransform.cos) * VIEW_SCALE;
-
-                    ctx.fillStyle = COLORS.wallColor;
-                    ctx.beginPath();
-                    ctx.moveTo(r1x, r1y);
-                    ctx.lineTo(r2x, r2y);
-                    ctx.lineTo(wr2x, wr2y);
-                    ctx.lineTo(wr1x, wr1y);
-                    ctx.closePath();
-                    ctx.fill();
-
-                    ctx.strokeStyle = COLORS.wallEdge;
-                    ctx.lineWidth = 1;
-                    ctx.stroke();
-                }
-            }
-        }
-    }
-}
 
 // Pre-allocated corners array for drawStartFinishLine
 let startLineCorners = [
     { x: 0, y: 0 }, { x: 0, y: 0 }, { x: 0, y: 0 }, { x: 0, y: 0 }
 ];
 
-function drawStartFinishLine(pathIdx) {
+function drawStartFinishLine(pathIdx, isFinishLine = false) {
     if (pathIdx < 0 || pathIdx >= trackPath.length) return;
     let halfW = TRACK_WIDTH / 2;
     let checks = 8;
     let checkSize = TRACK_WIDTH / checks;
     let lineDepth = checkSize * 0.6;
 
-    // Calculate average direction and normal from nearby points for better accuracy on curves
-    let avgDir = 0, avgNx = 0, avgNy = 0;
-    let sampleCount = 0;
-    let sampleRadius = 10; // Sample points within this radius
-    
-    for (let i = Math.max(0, pathIdx - sampleRadius); i <= Math.min(trackPath.length - 1, pathIdx + sampleRadius); i++) {
-        avgDir += trackPath[i].dir;
-        avgNx += trackPath[i].nx;
-        avgNy += trackPath[i].ny;
-        sampleCount++;
-    }
-    
-    avgDir /= sampleCount;
-    avgNx /= sampleCount;
-    avgNy /= sampleCount;
-    
-    // Normalize the averaged normal
-    let normLen = Math.sqrt(avgNx * avgNx + avgNy * avgNy);
-    if (normLen > 0.001) {
-        avgNx /= normLen;
-        avgNy /= normLen;
-    }
-
     let p = trackPath[pathIdx];
-    let pnx = avgNx, pny = avgNy, pdir = avgDir;
-    let cdir = Math.cos(pdir), sdir = Math.sin(pdir);
+    let pnx, pny, pdir, cdir, sdir;
+    
+    if (isFinishLine) {
+        // For finish line: use a fixed perpendicular direction to the road end
+        // Use the last segment's direction (last 2 adjacent points) for precise perpendicular
+        let endIdx = trackPath.length - 1;
+        let prevIdx = Math.max(0, endIdx - 1);
+        let dx = trackPath[endIdx].x - trackPath[prevIdx].x;
+        let dy = trackPath[endIdx].y - trackPath[prevIdx].y;
+        let len = Math.sqrt(dx * dx + dy * dy);
+        if (len < 0.001) len = 0.001;
+        
+        // Road direction at end (unit vector along the road)
+        let roadDirX = dx / len;
+        let roadDirY = dy / len;
+        
+        // Perpendicular direction (normal to road) - rotate 90 degrees counter-clockwise
+        // If road goes in direction (dx, dy), perpendicular is (-dy, dx)
+        pnx = -roadDirY;  // x component of perpendicular
+        pny = roadDirX;   // y component of perpendicular
+        
+        // Direction angle for reference
+        pdir = Math.atan2(roadDirY, roadDirX);
+        
+        // For forward/backward offset along the road
+        cdir = roadDirX;
+        sdir = roadDirY;
+    } else {
+        // For start line: use the original method
+        pnx = p.nx;
+        pny = p.ny;
+        pdir = p.dir;
+        cdir = Math.cos(pdir);
+        sdir = Math.sin(pdir);
+    }
+    
     let camX = camera.x, camY = camera.y;
     let camCos = cameraTransform.cos, camSin = cameraTransform.sin;
     let sway = camera.swayOffset;
@@ -5552,7 +5389,6 @@ function startGame() {
     
     setTimeout(function() {
         selfIntersectionZones = detectSelfIntersections(trackPath.length);
-        trackWalls = generateWalls(trackPath.length);
         loadingProgress = 0.7;
     }, 250);
     
@@ -5653,7 +5489,7 @@ function update(dt) {
     for (let car of cars) {
         if (car.isPlayer) {
             // Player collision checks
-            checkWallCollision(car);
+
             checkSceneryCollision(car);
             continue;
         }
@@ -5667,11 +5503,7 @@ function update(dt) {
         // Update NPC
         updateNPC(car, dt, isPlayerNearby);
 
-        // Collision checks only for nearby NPCs
-        if (isPlayerNearby) {
-            checkWallCollision(car);
-            checkSceneryCollision(car);
-        }
+
 
         // Track boundary for all NPCs
         enforceTrackBoundary(car);
@@ -5717,7 +5549,7 @@ function update(dt) {
         }
     }
 
-    // Car-to-car collisions - direct iteration without creating new array
+    // Car-to-car collisions
     if (cars.length > 1 && player) {
         for (let i = 0; i < cars.length; i++) {
             let a = cars[i];
@@ -5729,84 +5561,117 @@ function update(dt) {
                 let bIsNear = b.isPlayer || ((b.x - playerX) ** 2 + (b.y - playerY) ** 2 < activeDistSq);
                 if (!bIsNear) continue;
                 
-                let dx = b.x - a.x;
-                let dy = b.y - a.y;
-                let d = Math.sqrt(dx * dx + dy * dy);
-                let minDist = (CAR_WIDTH + CAR_LENGTH) / 2 * 0.7;
+                // Use simple circle collision for NPC-to-NPC, capsule collision for player involved
+                let useCapsule = a.isPlayer || b.isPlayer;
+                
+                let nx, ny, overlap;
+                
+                if (useCapsule) {
+                    // Capsule collision for player involved
+                    let collision = checkCarToCarCollision(a, b);
+                    if (!collision || collision.overlap <= 0) continue;
+                    nx = collision.nx;
+                    ny = collision.ny;
+                    overlap = collision.overlap;
+                } else {
+                    // Simple circle collision for NPC-to-NPC
+                    let dx = b.x - a.x;
+                    let dy = b.y - a.y;
+                    let d = Math.sqrt(dx * dx + dy * dy);
+                    let minDist = (CAR_WIDTH + CAR_LENGTH) / 2 * 0.7;
+                    if (d >= minDist || d <= 0.01) continue;
+                    nx = dx / d;
+                    ny = dy / d;
+                    overlap = minDist - d;
+                }
 
-                if (d < minDist && d > 0.01) {
-                    let nx = dx / d;
-                    let ny = dy / d;
+                // Calculate collision direction relative to car A
+                let aCos = Math.cos(a.direction);
+                let aSin = Math.sin(a.direction);
+                // Forward component: positive = front collision, negative = rear collision
+                let forwardDot = nx * aCos + ny * aSin;
+                // Side component: absolute value indicates side collision
+                let sideDot = Math.abs(-nx * aSin + ny * aCos);
 
-                    // Strong separation - always push apart enough to prevent sticking
-                    let overlap = minDist - d;
-                    let pushStrength = Math.max(overlap * 0.6, 2);
-                    a.x -= nx * pushStrength;
-                    a.y -= ny * pushStrength;
-                    b.x += nx * pushStrength;
-                    b.y += ny * pushStrength;
+                // Determine if this is a side collision (side component > forward component)
+                let isSideCollision = sideDot > Math.abs(forwardDot);
 
-                    let avx = Math.cos(a.direction) * a.speed;
-                    let avy = Math.sin(a.direction) * a.speed;
-                    let bvx = Math.cos(b.direction) * b.speed;
-                    let bvy = Math.sin(b.direction) * b.speed;
+                // Strong separation - always push apart enough to prevent sticking
+                let posPushStrength = Math.max(overlap * 0.6, 2);
+                if (isSideCollision) {
+                    posPushStrength *= 0.25; // Reduce side position push to 1/4
+                }
+                
+                a.x -= nx * posPushStrength;
+                a.y -= ny * posPushStrength;
+                b.x += nx * posPushStrength;
+                b.y += ny * posPushStrength;
 
-                    let aDotN = avx * nx + avy * ny;
-                    let bDotN = bvx * nx + bvy * ny;
+                let avx = Math.cos(a.direction) * a.speed;
+                let avy = Math.sin(a.direction) * a.speed;
+                let bvx = Math.cos(b.direction) * b.speed;
+                let bvy = Math.sin(b.direction) * b.speed;
 
-                    // Always resolve - even if not approaching, push apart to unstick
-                    let relVel = aDotN - bDotN;
-                    if (relVel > -0.5) { // resolve if approaching OR nearly stationary
-                        let restitution = 0.6; // bouncier
-                        let impulse = (1 + restitution) * Math.max(relVel, 0.5) / 2;
-                        impulse = clamp(impulse, 1.0, 4.0); // minimum bounce impulse
+                let aDotN = avx * nx + avy * ny;
+                let bDotN = bvx * nx + bvy * ny;
 
-                        avx -= impulse * nx;
-                        avy -= impulse * ny;
-                        bvx += impulse * nx;
-                        bvy += impulse * ny;
+                // Always resolve - even if not approaching, push apart to unstick
+                let relVel = aDotN - bDotN;
+                if (relVel > -0.5) { // resolve if approaching OR nearly stationary
+                    let restitution = 0.6; // bouncier
+                    let impulse = (1 + restitution) * Math.max(relVel, 0.5) / 2;
+                    impulse = clamp(impulse, 1.0, 4.0); // minimum bounce impulse
+                    
+                    // Reduce velocity impulse for side collisions
+                    if (isSideCollision) {
+                        impulse *= 0.25;
+                    }
 
-                        let newDirA = Math.atan2(avy, avx);
-                        let newDirB = Math.atan2(bvy, bvx);
-                        let newSpeedA = Math.sqrt(avx * avx + avy * avy);
-                        let newSpeedB = Math.sqrt(bvx * bvx + bvy * bvy);
+                    avx -= impulse * nx;
+                    avy -= impulse * ny;
+                    bvx += impulse * nx;
+                    bvy += impulse * ny;
 
-                        // Blend direction more aggressively for visible bounce
-                        let blendFactor = 0.7;
-                        a.direction = a.direction + angleDiff(a.direction, newDirA) * blendFactor;
-                        b.direction = b.direction + angleDiff(b.direction, newDirB) * blendFactor;
-                        a.direction = normalizeAngle(a.direction);
-                        b.direction = normalizeAngle(b.direction);
+                    let newDirA = Math.atan2(avy, avx);
+                    let newDirB = Math.atan2(bvy, bvx);
+                    let newSpeedA = Math.sqrt(avx * avx + avy * avy);
+                    let newSpeedB = Math.sqrt(bvx * bvx + bvy * bvy);
 
-                        // Ensure minimum speed after collision so cars don't stop
-                        let minBounceSpeed = 2.0;
-                        a.speed = lerp(Math.abs(a.speed), newSpeedA, 0.6) * (a.speed >= 0 ? 1 : -1);
-                        b.speed = lerp(Math.abs(b.speed), newSpeedB, 0.6) * (b.speed >= 0 ? 1 : -1);
-                        a.speed *= 0.85;
-                        b.speed *= 0.85;
-                        if (Math.abs(a.speed) < minBounceSpeed) a.speed = minBounceSpeed * (a.speed >= 0 ? 1 : -1);
-                        if (Math.abs(b.speed) < minBounceSpeed) b.speed = minBounceSpeed * (b.speed >= 0 ? 1 : -1);
-                        a.collisionPenalty = 0.4;
-                        b.collisionPenalty = 0.4;
+                    // Blend direction more aggressively for visible bounce
+                    let blendFactor = 0.7;
+                    a.direction = a.direction + angleDiff(a.direction, newDirA) * blendFactor;
+                    b.direction = b.direction + angleDiff(b.direction, newDirB) * blendFactor;
+                    a.direction = normalizeAngle(a.direction);
+                    b.direction = normalizeAngle(b.direction);
 
-                        a.speed = clamp(a.speed, -a.maxSpeed, a.maxSpeed);
-                        b.speed = clamp(b.speed, -b.maxSpeed, b.maxSpeed);
+                    // Ensure minimum speed after collision so cars don't stop
+                    let minBounceSpeed = 2.0;
+                    a.speed = lerp(Math.abs(a.speed), newSpeedA, 0.6) * (a.speed >= 0 ? 1 : -1);
+                    b.speed = lerp(Math.abs(b.speed), newSpeedB, 0.6) * (b.speed >= 0 ? 1 : -1);
+                    a.speed *= 0.85;
+                    b.speed *= 0.85;
+                    if (Math.abs(a.speed) < minBounceSpeed) a.speed = minBounceSpeed * (a.speed >= 0 ? 1 : -1);
+                    if (Math.abs(b.speed) < minBounceSpeed) b.speed = minBounceSpeed * (b.speed >= 0 ? 1 : -1);
+                    a.collisionPenalty = 0.4;
+                    b.collisionPenalty = 0.4;
 
-                        if (a.collisionCooldown <= 0 && b.collisionCooldown <= 0) {
-                            let collisionDist = Math.sqrt((a.x - playerX) ** 2 + (a.y - playerY) ** 2);
-                            if (collisionDist < 500) {
-                                playCollisionSound();
-                            }
-                            a.collisionCooldown = 0.1;
-                            b.collisionCooldown = 0.1;
+                    a.speed = clamp(a.speed, -a.maxSpeed, a.maxSpeed);
+                    b.speed = clamp(b.speed, -b.maxSpeed, b.maxSpeed);
+
+                    if (a.collisionCooldown <= 0 && b.collisionCooldown <= 0) {
+                        let collisionDist = Math.sqrt((a.x - playerX) ** 2 + (a.y - playerY) ** 2);
+                        if (collisionDist < 500) {
+                            playCollisionSound();
                         }
+                        a.collisionCooldown = 0.1;
+                        b.collisionCooldown = 0.1;
+                    }
 
-                        let cx = (a.x + b.x) / 2;
-                        let cy = (a.y + b.y) / 2;
-                        let maxSparks = Math.min(4, MAX_SPARKS - particleCounts.spark);
-                        for (let s = 0; s < maxSparks; s++) {
-                            spawnSpark(cx, cy);
-                        }
+                    let cx = (a.x + b.x) / 2;
+                    let cy = (a.y + b.y) / 2;
+                    let maxSparks = Math.min(4, MAX_SPARKS - particleCounts.spark);
+                    for (let s = 0; s < maxSparks; s++) {
+                        spawnSpark(cx, cy);
                     }
                 }
             }
@@ -5848,7 +5713,7 @@ function render() {
 
     // Start/finish lines (still using Canvas for checkerboard pattern)
     drawStartFinishLine(0);
-    drawStartFinishLine(trackPath.length - 1);
+    drawStartFinishLine(trackPath.length - 1, true);
 
     // Draw particles behind cars
     drawParticles();
