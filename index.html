@@ -62,7 +62,7 @@ const COLORS = {
     grass: '#2d8a4e',
     trackSurface: '#3a3a4a',
     branchSurface: '#3a3a4a',
-    trackEdge: '#3da160',
+    trackEdge: '#39995b',
     centerLine: '#ffd166',
     playerCar: '#ff3366',
     npcCars: ['#00d4ff', '#00e676', '#ffab00', '#b388ff', '#ff80ab', '#ff9ff3', '#48dbfb', '#feca57', '#ff6348', '#c8d6e5'],
@@ -2939,7 +2939,9 @@ function createCar(color, isPlayer) {
         blockedTimer: 0,
         overtakeState: 'none',
         overtakeTargetLane: 0,
-        overtakeTimer: 0
+        overtakeTimer: 0,
+        targetX: 0, targetY: 0,
+        positionSmoothness: 0.7
     };
 }
 
@@ -2969,6 +2971,7 @@ function placeCars() {
     let pCar = createCar(COLORS.playerCar, true);
     let sp = trackPath[startIdx];
     pCar.x = sp.x; pCar.y = sp.y;
+    pCar.targetX = sp.x; pCar.targetY = sp.y;
     pCar.direction = sp.dir; pCar.visualAngle = sp.dir;
     pCar.currentPathIdx = startIdx;
     player = pCar;
@@ -3061,6 +3064,8 @@ function spawnNPCNearPlayer() {
 
             npc.x = candX;
             npc.y = candY;
+            npc.targetX = candX;
+            npc.targetY = candY;
             npc.direction = np.dir;
             npc.visualAngle = np.dir;
             npc.currentPathIdx = spawnIdx;
@@ -3355,8 +3360,11 @@ function updateNPC(car, dt, isPlayerNearby) {
         else car.speed *= 0.995;
         car.speed = clamp(car.speed, 0, car.maxSpeed);
         
-        car.x += Math.cos(car.direction) * car.speed;
-        car.y += Math.sin(car.direction) * car.speed;
+        car.targetX += Math.cos(car.direction) * car.speed;
+        car.targetY += Math.sin(car.direction) * car.speed;
+        
+        car.x += (car.targetX - car.x) * car.positionSmoothness;
+        car.y += (car.targetY - car.y) * car.positionSmoothness;
         
         let ad = angleDiff(car.visualAngle, car.direction);
         car.visualAngle += ad * 0.1;
@@ -3411,17 +3419,14 @@ function updateNPC(car, dt, isPlayerNearby) {
     }
     car.speed = clamp(car.speed, 0, car.maxSpeed);
 
-    car.x += Math.cos(car.direction) * car.speed;
-    car.y += Math.sin(car.direction) * car.speed;
-
-    let ad = angleDiff(car.visualAngle, car.direction);
-    car.visualAngle += ad * 0.2;
+    car.targetX += Math.cos(car.direction) * car.speed;
+    car.targetY += Math.sin(car.direction) * car.speed;
 
     let closestIdx = car.currentPathIdx;
-    let trackDist = getTrackDistance(car.x, car.y, closestIdx);
+    let trackDist = getTrackDistance(car.targetX, car.targetY, closestIdx);
     let absTrackDist = Math.abs(trackDist);
     let onTrack = absTrackDist < TRACK_WIDTH / 2;
-    if (!onTrack) onTrack = isOnBranch(car.x, car.y);
+    if (!onTrack) onTrack = isOnBranch(car.targetX, car.targetY);
 
     if (!onTrack) {
         car.speed *= car.offTrackFriction;
@@ -3432,18 +3437,24 @@ function updateNPC(car, dt, isPlayerNearby) {
         let p = trackPath[closestIdx];
         let pushDir = trackDist > 0 ? -1 : 1;
         let pushAmount = Math.min((absTrackDist - halfW) * 0.05, 3);
-        car.x += p.nx * pushDir * pushAmount;
-        car.y += p.ny * pushDir * pushAmount;
+        car.targetX += p.nx * pushDir * pushAmount;
+        car.targetY += p.ny * pushDir * pushAmount;
     }
 
     if (absTrackDist > TRACK_WIDTH * 2) {
         let p = trackPath[closestIdx];
         let offset = (Math.random() - 0.5) * TRACK_WIDTH * 0.4;
-        car.x = p.x - Math.sin(p.dir) * offset;
-        car.y = p.y + Math.cos(p.dir) * offset;
+        car.targetX = p.x - Math.sin(p.dir) * offset;
+        car.targetY = p.y + Math.cos(p.dir) * offset;
         car.direction = p.dir;
         car.speed = car.maxSpeed * 0.5;
     }
+
+    car.x += (car.targetX - car.x) * car.positionSmoothness;
+    car.y += (car.targetY - car.y) * car.positionSmoothness;
+
+    let ad = angleDiff(car.visualAngle, car.direction);
+    car.visualAngle += ad * 0.2;
 }
 
 
@@ -3548,8 +3559,8 @@ function enforceTrackBoundary(car) {
             if (absDist > halfW + 20) {
                 let pushDir = lateralDist > 0 ? -1 : 1;
                 let pushAmount = Math.min((absDist - halfW) * 0.08, 4);
-                car.x += branchInfo.pnx * pushDir * pushAmount;
-                car.y += branchInfo.pny * pushDir * pushAmount;
+                car.targetX += branchInfo.pnx * pushDir * pushAmount;
+                car.targetY += branchInfo.pny * pushDir * pushAmount;
                 car.speed *= 0.98;
             }
         }
@@ -3557,8 +3568,8 @@ function enforceTrackBoundary(car) {
     }
     */
 
-    let closest = findClosestTrackPoint(car.x, car.y);
-    let trackDist = getTrackDistance(car.x, car.y, closest.index);
+    let closest = findClosestTrackPoint(car.targetX, car.targetY);
+    let trackDist = getTrackDistance(car.targetX, car.targetY, closest.index);
     let absDist = Math.abs(trackDist);
     let halfW = TRACK_WIDTH / 2;
 
@@ -3567,15 +3578,15 @@ function enforceTrackBoundary(car) {
         let p = trackPath[closest.index];
         let pushDir = trackDist > 0 ? -1 : 1;
         let pushAmount = Math.min((absDist - halfW) * 0.08, 5);
-        car.x += p.nx * pushDir * pushAmount;
-        car.y += p.ny * pushDir * pushAmount;
+        car.targetX += p.nx * pushDir * pushAmount;
+        car.targetY += p.ny * pushDir * pushAmount;
         car.speed *= 0.97;
     }
-    // Hard cap for NPCs only: if very far off track, teleport back
+    // Hard cap for NPCs only: if very far off track, set target position
     if (closest.dist > TRACK_WIDTH * 3) {
         let p = trackPath[closest.index];
-        car.x = p.x;
-        car.y = p.y;
+        car.targetX = p.x;
+        car.targetY = p.y;
         car.direction = p.dir;
         car.speed *= 0.3;
     }
@@ -3616,10 +3627,20 @@ function resolveCarCollisions() {
                     posPushStrength *= 0.25; // Reduce side position push to 1/4
                 }
                 
-                a.x -= nx * posPushStrength;
-                a.y -= ny * posPushStrength;
-                b.x += nx * posPushStrength;
-                b.y += ny * posPushStrength;
+                if (a.isNPC) {
+                    a.targetX -= nx * posPushStrength;
+                    a.targetY -= ny * posPushStrength;
+                } else {
+                    a.x -= nx * posPushStrength;
+                    a.y -= ny * posPushStrength;
+                }
+                if (b.isNPC) {
+                    b.targetX += nx * posPushStrength;
+                    b.targetY += ny * posPushStrength;
+                } else {
+                    b.x += nx * posPushStrength;
+                    b.y += ny * posPushStrength;
+                }
 
                 // Velocity components along normal
                 let avx = Math.cos(a.direction) * a.speed;
@@ -5252,10 +5273,10 @@ function update(dt) {
                 let pushDistance = (detectionRange - d) * 0.5;
                 pushDistance = Math.min(pushDistance, 3); // Max push per frame
                 
-                a.x -= nx * pushDistance;
-                a.y -= ny * pushDistance;
-                b.x += nx * pushDistance;
-                b.y += ny * pushDistance;
+                a.targetX -= nx * pushDistance;
+                a.targetY -= ny * pushDistance;
+                b.targetX += nx * pushDistance;
+                b.targetY += ny * pushDistance;
             }
         }
     }
