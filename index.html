@@ -3,18 +3,19 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>迷你漫游</title>
+<title>MINI Roaming</title>
+<link href="https://fonts.googleapis.com/css2?family=Audiowide&display=swap" rel="stylesheet">
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 html,body{width:100%;height:100%;overflow:hidden;background:#0a0a1a;font-family:'Segoe UI',sans-serif;user-select:none}
-canvas{display:block;width:100%;height:100%;image-rendering:-webkit-optimize-contrast;image-rendering:crisp-edges}
+canvas{display:block;width:100%;height:100%}
 </style>
 </head>
 <body>
 <canvas id="gameCanvas"></canvas>
 <input type="text" id="seedInput" placeholder="随机" maxlength="12" autocomplete="off" style="position:absolute;left:50%;transform:translateX(-50%);width:160px;height:44px;padding:0 16px;font-size:16px;font-family:'Segoe UI',sans-serif;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.3);border-radius:10px;color:#fff;outline:none;z-index:10;transition:all 0.2s;box-sizing:border-box;display:none;text-align:center;" onfocus="this.style.background='rgba(255,255,255,0.15)';this.style.borderColor='rgba(255,51,102,0.8)';hideStartButtonForMobileInput();" onblur="this.style.background='rgba(255,255,255,0.08)';this.style.borderColor='rgba(255,255,255,0.3)';showStartButtonForMobileInput();" oninput="limitSeedInput(this)">
 <script>
-// roundRect polyfill
+// roundRect 兼容性补丁
 if (!CanvasRenderingContext2D.prototype.roundRect) {
     CanvasRenderingContext2D.prototype.roundRect = function(x, y, w, h, r) {
         if (typeof r === 'number') r = [r, r, r, r];
@@ -32,22 +33,22 @@ if (!CanvasRenderingContext2D.prototype.roundRect) {
         this.closePath();
     };
 }
-// ==================== CONSTANTS ====================
-const TRACK_WIDTH = 160;
-const BRANCH_WIDTH = 60;
+// ==================== 常量 ====================
+const TRACK_WIDTH = 170;
+const BRANCH_WIDTH = 70;
 const CAR_WIDTH = 28;
 const CAR_LENGTH = 52;
 const SPLINE_SEGMENTS = 15;
 const NPC_COUNT_MIN = 2;
 const NPC_COUNT_MAX = 5;
-let npcTargetCount = 3; // dynamic target, updated periodically
+let npcTargetCount = 3; // 动态目标数量，定期更新
 const NPC_SPAWN_DISTANCE = 800;
 const NPC_DESPAWN_DISTANCE = 1200;
 const NPC_MAX_COUNT = 6;
 const VIEW_DISTANCE = 1500;
-const TRACK_EDGE_THICKNESS = 36; // Track edge line thickness in pixels
+const TRACK_EDGE_THICKNESS = 16; // 赛道边缘线厚度（像素）
 
-// NPC pool for performance - pre-allocate cars to avoid garbage collection
+// NPC对象池 - 预分配车辆以避免垃圾回收
 let npcPool = [];
 let activeNPCs = [];
 const NPC_START_DELAY = 200;
@@ -57,7 +58,7 @@ const VIEW_SCALE = (function() {
     return isMobile ? 0.82 : 1.0;
 })();
 
-// ==================== COLORS (bold contrasting palette) ====================
+// ==================== 颜色（高对比度调色板） ====================
 const COLORS = {
     grass: '#2d8a4e',
     trackSurface: '#3a3a4a',
@@ -75,7 +76,7 @@ const COLORS = {
     dust: ['#a0926b', '#b5a882', '#c8bb96'],
     startLine1: '#ffffff',
     startLine2: '#111122',
-    // Menu: dark bold style
+    // 菜单：深色粗体风格
     menuBg: '#0f0f1a',
     accent: '#ff3366',
     accentAlt: '#00d4ff',
@@ -94,21 +95,24 @@ const COLORS = {
     hudBorder: 'rgba(255,255,255,0.08)'
 };
 
-// ==================== CANVAS SETUP ====================
+// ==================== 画布设置 ====================
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d', { alpha: true, desynchronized: false });
 
-// Enable image smoothing for better quality
-ctx.imageSmoothingEnabled = true;
-ctx.imageSmoothingQuality = 'high';
+// 画质设置 - '1'键切换DPR，'2'键切换平滑
+let dprEnabled = true;
+let smoothingEnabled = true;
+
+function applySmoothing() {
+    ctx.imageSmoothingEnabled = smoothingEnabled;
+    canvas.style.imageRendering = smoothingEnabled ? 'auto' : 'pixelated';
+}
 
 let W = canvas.width = window.innerWidth;
 let H = canvas.height = window.innerHeight;
 
-let dpr = window.devicePixelRatio || 1;
-
-// ==================== GAME STATE ====================
-let gameState = 'menu'; // menu, loading, countdown, racing, results
+// ==================== 游戏状态 ====================
+let gameState = 'menu'; // 菜单、加载中、倒计时、比赛中、结果
 let loadingProgress = 0;
 let loadingStartTime = 0;
 
@@ -139,55 +143,55 @@ let playerPrevX = 0, playerPrevY = 0;
 let lastCountdownBeep = -1; // track which countdown number last beeped
 let lastMouseX = 0, lastMouseY = 0; // track mouse position for hover effects
 
-// Camera
-let camera = { x: 0, y: 0, angle: 0, targetAngle: 0, swayOffset: 0, elasticSway: 0, viewBounds: { minX: 0, maxX: 0, minY: 0, maxY: 0 } };
+// 相机
+let camera = { x: 0, y: 0, angle: 0, targetAngle: 0, rotationOffset: 0, swayOffset: 0, elasticSway: 0, viewBounds: { minX: 0, maxX: 0, minY: 0, maxY: 0 } };
 
-// Precomputed camera transform cache
+// 预计算的相机变换缓存
 let cameraTransform = { cos: 1, sin: 1, VIEW_SCALE: VIEW_SCALE };
 
-// Camera elastic sway parameters
+// 相机弹性摇摆参数
 const CAMERA_ELASTICITY = 0.25;  // 弹性系数（加大）
 const CAMERA_DAMPING = 0.88;     // 阻尼系数（更持久）
 const CAMERA_SWAY_SENSITIVITY = 0.015;  // 离心力灵敏度（加大）
 
 const VIEW_MARGIN = 200;
 
-// Visible track range - updated each frame to avoid drawing entire track
+// 可见赛道范围 - 每帧更新以避免绘制整个赛道
 let visibleTrackRange = { start: 0, end: 0 };
-const VISIBLE_RANGE_PADDING = 120; // extra points beyond screen edges
-let additionalVisibleSegments = []; // segments visible due to track folding back
+const VISIBLE_RANGE_PADDING = 120; // 屏幕边缘外的额外点数
+let additionalVisibleSegments = []; // 由于赛道折叠而可见的段落
 
-// Input
+// 输入
 let keys = {};
 let touchControls = { left: false, right: false, up: false, down: false };
 let isMobileInputActive = false;
-let showNPCs = true; // NPC display toggle
+let showNPCs = true; // NPC显示开关
 
-// Seed input limit function
+// 种子输入限制函数
 function limitSeedInput(input) {
-    // Limit to alphanumeric characters only
+    // 仅限字母数字字符
     input.value = input.value.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
-    // Enforce maxlength
+    // 强制最大长度
     if (input.value.length > 12) {
         input.value = input.value.substring(0, 12);
     }
 }
 
-// Hide start button when mobile input is focused
+// 移动端输入聚焦时隐藏开始按钮
 function hideStartButtonForMobileInput() {
     if ('ontouchstart' in window) {
         isMobileInputActive = true;
     }
 }
 
-// Show start button when mobile input is blurred
+// 移动端输入失焦时显示开始按钮
 function showStartButtonForMobileInput() {
     if ('ontouchstart' in window) {
         isMobileInputActive = false;
     }
 }
 
-// Clear seed input when returning to menu
+// 返回菜单时清空种子输入
 function clearSeedInput() {
     let seedInput = document.getElementById('seedInput');
     if (seedInput) {
@@ -195,7 +199,7 @@ function clearSeedInput() {
     }
 }
 
-// Audio
+// 音频
 let audioCtx = null;
 let audioInitialized = false;
 let engineOsc = null;
@@ -236,7 +240,7 @@ document.addEventListener('visibilitychange', function() {
     }
 });
 
-// Object Pool System for Trees and People
+// 树木和人物的对象池系统
 class ObjectPool {
     constructor(createFn, initialSize = 50) {
         this.createFn = createFn;
@@ -282,7 +286,7 @@ class ObjectPool {
     }
 }
 
-// Tree Object Pool
+// 树木对象池
 const treePool = new ObjectPool(() => ({
     type: 'tree',
     x: 0,
@@ -294,7 +298,7 @@ const treePool = new ObjectPool(() => ({
     lastVisibleTime: 0
 }), 100);
 
-// People Group Object Pool
+// 人群对象池
 const peoplePool = new ObjectPool(() => ({
     type: 'people',
     x: 0,
@@ -304,7 +308,7 @@ const peoplePool = new ObjectPool(() => ({
     lastVisibleTime: 0
 }), 50);
 
-// Visibility Management System
+// 可见性管理系统
 class VisibilityManager {
     constructor() {
         this.visibleRange = 1200;
@@ -351,7 +355,7 @@ class VisibilityManager {
 
 const visibilityManager = new VisibilityManager();
 
-// Optimized Scenery Rendering with Object Pool
+// 使用对象池的优化场景渲染
 function drawSceneryOptimized() {
     const visibleItems = visibilityManager.getVisibleItems();
     
@@ -381,7 +385,7 @@ function drawSceneryOptimized() {
     }
 }
 
-// ==================== CANVAS MAP RENDERING ====================
+// ==================== 画布地图渲染 ====================
 function drawGrass() {
     ctx.fillStyle = COLORS.grass;
     ctx.fillRect(0, 0, W, H);
@@ -390,13 +394,13 @@ function drawGrass() {
 function drawTrackSurface() {
     ctx.fillStyle = COLORS.trackSurface;
     
-    // Draw main visible range with smooth curves
+    // 使用平滑曲线绘制主可见范围
     let vStart = visibleTrackRange.start;
     let vEnd = Math.min(visibleTrackRange.end, trackLeftEdge.length - 1);
     if (vEnd > vStart) {
         ctx.beginPath();
         
-        // Draw left edge forward with quadratic curves
+        // 使用二次曲线向前绘制左边缘
         let firstWp = trackLeftEdge[vStart];
         let firstDx = firstWp.x - camera.x;
         let firstDy = firstWp.y - camera.y;
@@ -421,7 +425,7 @@ function drawTrackSurface() {
             ctx.quadraticCurveTo(px1, py1, cx, cy);
         }
         
-        // Last point
+        // 左边缘的最后一个点
         let lastLeft = trackLeftEdge[vEnd];
         let lastLeftDx = lastLeft.x - camera.x;
         let lastLeftDy = lastLeft.y - camera.y;
@@ -429,7 +433,15 @@ function drawTrackSurface() {
         let lastLeftPy = H * 0.6 + (lastLeftDx * cameraTransform.sin + lastLeftDy * cameraTransform.cos) * VIEW_SCALE;
         ctx.lineTo(lastLeftPx, lastLeftPy);
         
-        // Draw right edge backward with quadratic curves
+        // 连接到右边缘终点
+        let lastRight = trackRightEdge[vEnd];
+        let lastRightDx = lastRight.x - camera.x;
+        let lastRightDy = lastRight.y - camera.y;
+        let lastRightPx = W / 2 + (lastRightDx * cameraTransform.cos - lastRightDy * cameraTransform.sin) * VIEW_SCALE + camera.swayOffset;
+        let lastRightPy = H * 0.6 + (lastRightDx * cameraTransform.sin + lastRightDy * cameraTransform.cos) * VIEW_SCALE;
+        ctx.lineTo(lastRightPx, lastRightPy);
+        
+        // 使用二次曲线向后绘制右边缘
         for (let i = vEnd; i > vStart; i--) {
             let wp1 = trackRightEdge[i];
             let wp2 = trackRightEdge[i - 1];
@@ -447,11 +459,19 @@ function drawTrackSurface() {
             ctx.quadraticCurveTo(px1, py1, cx, cy);
         }
         
+        // 连接回左边缘的起点
+        let firstRight = trackRightEdge[vStart];
+        let firstRightDx = firstRight.x - camera.x;
+        let firstRightDy = firstRight.y - camera.y;
+        let firstRightPx = W / 2 + (firstRightDx * cameraTransform.cos - firstRightDy * cameraTransform.sin) * VIEW_SCALE + camera.swayOffset;
+        let firstRightPy = H * 0.6 + (firstRightDx * cameraTransform.sin + firstRightDy * cameraTransform.cos) * VIEW_SCALE;
+        ctx.lineTo(firstRightPx, firstRightPy);
+        
         ctx.closePath();
         ctx.fill();
     }
     
-    // Draw additional visible segments (track folding back)
+    // 绘制额外的可见段落（赛道折叠回来的部分）
     for (let seg of additionalVisibleSegments) {
         let segStart = Math.max(0, seg.start);
         let segEnd = Math.min(trackLeftEdge.length - 1, seg.end);
@@ -459,7 +479,7 @@ function drawTrackSurface() {
         
         ctx.beginPath();
         
-        // Draw left edge forward with quadratic curves
+        // 使用二次曲线向前绘制左边缘
         let segFirstWp = trackLeftEdge[segStart];
         let segFirstDx = segFirstWp.x - camera.x;
         let segFirstDy = segFirstWp.y - camera.y;
@@ -484,7 +504,7 @@ function drawTrackSurface() {
             ctx.quadraticCurveTo(px1, py1, cx, cy);
         }
         
-        // Last point for segment
+        // 段落的最后一个点
         let segLastLeft = trackLeftEdge[segEnd];
         let segLastLeftDx = segLastLeft.x - camera.x;
         let segLastLeftDy = segLastLeft.y - camera.y;
@@ -492,7 +512,15 @@ function drawTrackSurface() {
         let segLastLeftPy = H * 0.6 + (segLastLeftDx * cameraTransform.sin + segLastLeftDy * cameraTransform.cos) * VIEW_SCALE;
         ctx.lineTo(segLastLeftPx, segLastLeftPy);
         
-        // Draw right edge backward with quadratic curves
+        // 连接到段落的右边缘终点
+        let segLastRight = trackRightEdge[segEnd];
+        let segLastRightDx = segLastRight.x - camera.x;
+        let segLastRightDy = segLastRight.y - camera.y;
+        let segLastRightPx = W / 2 + (segLastRightDx * cameraTransform.cos - segLastRightDy * cameraTransform.sin) * VIEW_SCALE + camera.swayOffset;
+        let segLastRightPy = H * 0.6 + (segLastRightDx * cameraTransform.sin + segLastRightDy * cameraTransform.cos) * VIEW_SCALE;
+        ctx.lineTo(segLastRightPx, segLastRightPy);
+        
+        // 使用二次曲线向后绘制右边缘
         for (let i = segEnd; i > segStart; i--) {
             let wp1 = trackRightEdge[i];
             let wp2 = trackRightEdge[i - 1];
@@ -510,22 +538,30 @@ function drawTrackSurface() {
             ctx.quadraticCurveTo(px1, py1, cx, cy);
         }
         
+        // 连接回段落的左边缘起点
+        let segFirstRight = trackRightEdge[segStart];
+        let segFirstRightDx = segFirstRight.x - camera.x;
+        let segFirstRightDy = segFirstRight.y - camera.y;
+        let segFirstRightPx = W / 2 + (segFirstRightDx * cameraTransform.cos - segFirstRightDy * cameraTransform.sin) * VIEW_SCALE + camera.swayOffset;
+        let segFirstRightPy = H * 0.6 + (segFirstRightDx * cameraTransform.sin + segFirstRightDy * cameraTransform.cos) * VIEW_SCALE;
+        ctx.lineTo(segFirstRightPx, segFirstRightPy);
+        
         ctx.closePath();
         ctx.fill();
     }
 }
 
-// Helper function to draw smooth curved path using quadratic curves
+// 使用二次曲线绘制平滑曲线路径的辅助函数
 function drawSmoothPath(edgePoints, startIdx, endIdx, movingForward) {
-    // Ensure indices are within bounds
+    // 确保索引在边界内
     startIdx = Math.max(0, Math.min(startIdx, edgePoints.length - 1));
     endIdx = Math.max(0, Math.min(endIdx, edgePoints.length - 1));
     
     if (movingForward) {
-        // Forward: startIdx -> endIdx
+        // 向前：startIdx -> endIdx
         if (endIdx <= startIdx) return;
         
-        // First point
+        // 第一个点
         let wp = edgePoints[startIdx];
         let dx = wp.x - camera.x;
         let dy = wp.y - camera.y;
@@ -533,12 +569,12 @@ function drawSmoothPath(edgePoints, startIdx, endIdx, movingForward) {
         let py = H * 0.6 + (dx * cameraTransform.sin + dy * cameraTransform.cos) * VIEW_SCALE;
         ctx.moveTo(px, py);
         
-        // Draw using quadratic curves through midpoints
+        // 使用二次曲线通过中点绘制
         for (let i = startIdx; i < endIdx; i++) {
             let p1 = edgePoints[i];
             let p2 = edgePoints[i + 1];
             
-            // Transform to screen space
+            // 转换到屏幕空间
             let dx1 = p1.x - camera.x, dy1 = p1.y - camera.y;
             let px1 = W / 2 + (dx1 * cameraTransform.cos - dy1 * cameraTransform.sin) * VIEW_SCALE + camera.swayOffset;
             let py1 = H * 0.6 + (dx1 * cameraTransform.sin + dy1 * cameraTransform.cos) * VIEW_SCALE;
@@ -547,17 +583,17 @@ function drawSmoothPath(edgePoints, startIdx, endIdx, movingForward) {
             let px2 = W / 2 + (dx2 * cameraTransform.cos - dy2 * cameraTransform.sin) * VIEW_SCALE + camera.swayOffset;
             let py2 = H * 0.6 + (dx2 * cameraTransform.sin + dy2 * cameraTransform.cos) * VIEW_SCALE;
             
-            // Use midpoint as control point for smooth curve
+            // 使用中点作为控制点以获得平滑曲线
             let cx = (px1 + px2) / 2;
             let cy = (py1 + py2) / 2;
             
             ctx.quadraticCurveTo(cx, cy, px2, py2);
         }
     } else {
-        // Backward: startIdx -> endIdx (startIdx > endIdx)
+        // 向后：startIdx -> endIdx (startIdx > endIdx)
         if (startIdx <= endIdx) return;
         
-        // First point
+        // 第一个点
         let wp = edgePoints[startIdx];
         let dx = wp.x - camera.x;
         let dy = wp.y - camera.y;
@@ -565,12 +601,12 @@ function drawSmoothPath(edgePoints, startIdx, endIdx, movingForward) {
         let py = H * 0.6 + (dx * cameraTransform.sin + dy * cameraTransform.cos) * VIEW_SCALE;
         ctx.moveTo(px, py);
         
-        // Draw using quadratic curves through midpoints (backward)
+        // 使用二次曲线通过中点绘制（向后）
         for (let i = startIdx; i > endIdx; i--) {
             let p1 = edgePoints[i];
             let p2 = edgePoints[i - 1];
             
-            // Transform to screen space
+            // 转换到屏幕空间
             let dx1 = p1.x - camera.x, dy1 = p1.y - camera.y;
             let px1 = W / 2 + (dx1 * cameraTransform.cos - dy1 * cameraTransform.sin) * VIEW_SCALE + camera.swayOffset;
             let py1 = H * 0.6 + (dx1 * cameraTransform.sin + dy1 * cameraTransform.cos) * VIEW_SCALE;
@@ -579,7 +615,7 @@ function drawSmoothPath(edgePoints, startIdx, endIdx, movingForward) {
             let px2 = W / 2 + (dx2 * cameraTransform.cos - dy2 * cameraTransform.sin) * VIEW_SCALE + camera.swayOffset;
             let py2 = H * 0.6 + (dx2 * cameraTransform.sin + dy2 * cameraTransform.cos) * VIEW_SCALE;
             
-            // Use midpoint as control point for smooth curve
+            // 使用中点作为控制点以获得平滑曲线
             let cx = (px1 + px2) / 2;
             let cy = (py1 + py2) / 2;
             
@@ -592,12 +628,12 @@ function drawBranchSurfaces() {
     ctx.fillStyle = COLORS.branchSurface;
     for (let bi = 0; bi < branchPaths.length; bi++) {
         let bp = branchPaths[bi];
-        // Skip branches outside view using bounding box
+        // 使用边界框跳过视野外的分支
         let bb = branchBounds[bi];
         if (bb && (bb.maxX < camera.viewBounds.minX || bb.minX > camera.viewBounds.maxX ||
                    bb.maxY < camera.viewBounds.minY || bb.minY > camera.viewBounds.maxY)) continue;
 
-        // Skip fewer points since branch now extends into main track
+        // 由于分支现在延伸到主赛道，跳过较少的点
         let skipStart = Math.min(3, Math.floor(bp.path.length * 0.05));
         let skipEnd = Math.min(3, Math.floor(bp.path.length * 0.05));
         if (bp.leftEdge.length - skipStart - skipEnd < 2) continue;
@@ -609,7 +645,7 @@ function drawBranchSurfaces() {
         
         ctx.beginPath();
         
-        // Draw left edge forward with quadratic curves
+        // 使用二次曲线向前绘制左边缘
         let firstWp = bp.leftEdge[leftStart];
         let firstDx = firstWp.x - camera.x;
         let firstDy = firstWp.y - camera.y;
@@ -634,7 +670,7 @@ function drawBranchSurfaces() {
             ctx.quadraticCurveTo(px1, py1, cx, cy);
         }
         
-        // Last point of left edge
+        // 左边缘的最后一个点
         let lastLeft = bp.leftEdge[leftEnd];
         let lastLeftDx = lastLeft.x - camera.x;
         let lastLeftDy = lastLeft.y - camera.y;
@@ -642,7 +678,7 @@ function drawBranchSurfaces() {
         let lastLeftPy = H * 0.6 + (lastLeftDx * cameraTransform.sin + lastLeftDy * cameraTransform.cos) * VIEW_SCALE;
         ctx.lineTo(lastLeftPx, lastLeftPy);
         
-        // Draw right edge backward with quadratic curves
+        // 使用二次曲线向后绘制右边缘
         for (let i = rightEnd; i > rightStart; i--) {
             let wp1 = bp.rightEdge[i];
             let wp2 = bp.rightEdge[i - 1];
@@ -671,13 +707,13 @@ function drawAllRoadEdges() {
     ctx.lineCap = 'butt';
     ctx.lineJoin = 'round';
 
-    // Draw main track edges - use full track length to ensure edges cover entire road
+    // 绘制主赛道边缘 - 使用完整赛道长度确保边缘覆盖整个道路
     let vStart = 0;
     let vEnd = trackLeftEdge.length;
     drawEdgePath(trackLeftEdge, vStart, vEnd);
     drawEdgePath(trackRightEdge, vStart, vEnd);
 
-    // Draw branch edges
+    // 绘制分支边缘
     for (let bp of branchPaths) {
         let skipStart = Math.min(3, Math.floor(bp.path.length * 0.05));
         let skipEnd = Math.min(3, Math.floor(bp.path.length * 0.05));
@@ -720,7 +756,7 @@ function drawEdgePath(edgePoints, startIdx, endIdx) {
 }
 
 function drawCenterLine() {
-    // Two white semi-transparent solid lines along both sides of the main road (inset from edges)
+    // 主赛道两侧的两条白色半透明实线（从边缘向内缩进）
     ctx.strokeStyle = 'rgba(255,255,255)';
     ctx.lineWidth = 1.5;
 
@@ -728,40 +764,40 @@ function drawCenterLine() {
     let vEnd = Math.min(visibleTrackRange.end, trackPath.length - 1);
     let inset = TRACK_WIDTH * 0.38; // distance from center to each shoulder line
 
-    // Left shoulder line - main range
+    // 左侧路肩线 - 主范围
     ctx.beginPath();
     drawSmoothCenterLine(vStart, vEnd, inset, true);
     ctx.stroke();
 
-    // Right shoulder line - main range
+    // 右侧路肩线 - 主范围
     ctx.beginPath();
     drawSmoothCenterLine(vStart, vEnd, inset, false);
     ctx.stroke();
     
-    // Draw shoulder lines for additional visible segments
+    // 绘制额外可见段落的路肩线
     for (let seg of additionalVisibleSegments) {
         let segStart = Math.max(0, seg.start);
         let segEnd = Math.min(trackPath.length - 1, seg.end);
         
-        // Left shoulder line
+        // 左侧路肩线
         ctx.beginPath();
         drawSmoothCenterLine(segStart, segEnd, inset, true);
         ctx.stroke();
 
-        // Right shoulder line
+        // 右侧路肩线
         ctx.beginPath();
         drawSmoothCenterLine(segStart, segEnd, inset, false);
         ctx.stroke();
     }
 }
 
-// Helper function to draw smooth center line using Catmull-Rom to Bezier conversion
+// 使用Catmull-Rom转Bezier绘制平滑中心线的辅助函数
 function drawSmoothCenterLine(startIdx, endIdx, inset, isLeft) {
     if (endIdx <= startIdx) return;
     
     let sign = isLeft ? 1 : -1;
     
-    // First point
+    // 第一个点
     let wp0 = trackPath[startIdx];
     let lx0 = wp0.x + wp0.nx * inset * sign;
     let ly0 = wp0.y + wp0.ny * inset * sign;
@@ -777,7 +813,7 @@ function drawSmoothCenterLine(startIdx, endIdx, inset, isLeft) {
         let p2 = trackPath[i + 1];
         let p3 = trackPath[Math.min(endIdx, i + 2)];
         
-        // Calculate offset points
+        // 计算偏移点
         let pts = [p0, p1, p2, p3].map(p => {
             let lx = p.x + p.nx * inset * sign;
             let ly = p.y + p.ny * inset * sign;
@@ -789,7 +825,7 @@ function drawSmoothCenterLine(startIdx, endIdx, inset, isLeft) {
             };
         });
         
-        // Catmull-Rom to Bezier control points
+        // Catmull-Rom转Bezier控制点
         let tension = 0.5;
         let cp1x = pts[1].x + (pts[2].x - pts[0].x) * tension / 3;
         let cp1y = pts[1].y + (pts[2].y - pts[0].y) * tension / 3;
@@ -808,10 +844,10 @@ function drawScenery() {
     for (let i = 0; i < nearby.length; i++) {
         let item = nearby[i];
         let ddx = item.x - camX, ddy = item.y - camY;
-        // Skip scenery outside view distance (squared comparison)
+        // 跳过视野距离外的场景（使用平方比较）
         if (ddx * ddx + ddy * ddy > viewDistSq) continue;
         
-        // Inline screen transform
+        // 内联屏幕坐标转换
         let dx = item.x - camera.x;
         let dy = item.y - camera.y;
         let sx = W / 2 + (dx * cameraTransform.cos - dy * cameraTransform.sin) * VIEW_SCALE + camera.swayOffset;
@@ -846,27 +882,27 @@ window.addEventListener('focus', function() {
     }
 });
 
-// NPC Audio pool - performance optimized
+// NPC音频池 - 性能优化
 const NPC_AUDIO_ENABLED = true;
 const NPC_AUDIO_MAX_DISTANCE = 600;
 const NPC_AUDIO_FADE_DISTANCE = 80;
 let npcAudioNodes = [];
 
-// ==================== RESIZE ====================
+// ==================== 窗口调整 ====================
 function resize() {
-    let dpr = window.devicePixelRatio || 1;
+    let dpr = dprEnabled ? (window.devicePixelRatio || 1) : 1;
     W = window.innerWidth;
     H = window.innerHeight;
     canvas.width = W * dpr;
     canvas.height = H * dpr;
     canvas.style.width = W + 'px';
     canvas.style.height = H + 'px';
-    // Reset transform before scaling to prevent compounding on repeated resize
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    applySmoothing();
 }
 window.addEventListener('resize', resize);
 
-// ==================== INPUT ====================
+// ==================== 输入 ====================
 window.addEventListener('keydown', function(e) {
     keys[e.code] = true;
     if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space'].includes(e.code)) {
@@ -874,14 +910,26 @@ window.addEventListener('keydown', function(e) {
     }
     initAudio();
 
-    // Keyboard controls removed - UI now only supports mouse/touch
+    // 键盘控制已移除 - UI现在只支持鼠标/触摸
+    
+    // 画质切换快捷键
+    if (e.code === 'Digit1') {
+        dprEnabled = !dprEnabled;
+        resize();
+        console.log('DPR ' + (dprEnabled ? 'enabled' : 'disabled'));
+    }
+    if (e.code === 'Digit2') {
+        smoothingEnabled = !smoothingEnabled;
+        applySmoothing();
+        console.log('Image smoothing ' + (smoothingEnabled ? 'enabled' : 'disabled'));
+    }
 });
 
 window.addEventListener('keyup', function(e) {
     keys[e.code] = false;
 });
 
-// Touch controls
+// 触摸控制
 let touchAreas = [];
 let touchPressed = { left: false, right: false, up: false, down: false };
 let activeTouches = {}; // Track active touches by identifier
@@ -890,7 +938,7 @@ function setupTouchAreas() {
     const margin = 32;
     const bottomOffset = 100;
     const btnGap = 5;
-    // Left side: left/right (steering), Right side: up/down (gas/brake)
+    // 左侧：左/右（转向），右侧：上/下（油门/刹车）
     touchAreas = [
         { id: 'up', x: W - bw - margin, y: H - bh * 2 - margin - bottomOffset, w: bw, h: bh },
         { id: 'down', x: W - bw - margin, y: H - bh - margin - bottomOffset + btnGap, w: bw, h: bh },
@@ -903,7 +951,7 @@ setupTouchAreas();
 canvas.addEventListener('touchstart', function(e) {
     e.preventDefault();
     initAudio();
-    // Add new touches to activeTouches with their positions
+    // 将新触摸添加到activeTouches并记录位置
     for (let t = 0; t < e.changedTouches.length; t++) {
         let touch = e.changedTouches[t];
         activeTouches[touch.identifier] = {
@@ -913,7 +961,7 @@ canvas.addEventListener('touchstart', function(e) {
     }
     recalculateTouchState();
     
-    // Exit confirmation dialog - always check first
+    // 退出确认对话框 - 始终优先检查
     if (showExitConfirm) {
         for (let t = 0; t < e.touches.length; t++) {
             let tx = e.touches[t].clientX, ty = e.touches[t].clientY;
@@ -925,13 +973,13 @@ canvas.addEventListener('touchstart', function(e) {
             let btnY = boxY + boxH - 55;
             let btn1X = W / 2 - btnW - 15;
             let btn2X = W / 2 + 15;
-            // Cancel button
+            // 取消按钮
             if (tx >= btn1X && tx <= btn1X + btnW && ty >= btnY && ty <= btnY + btnH) {
                 showExitConfirm = false;
                 gamePaused = false;
                 resumeAudio();
             }
-            // Confirm button
+            // 确认按钮
             if (tx >= btn2X && tx <= btn2X + btnW && ty >= btnY && ty <= btnY + btnH) {
                 showExitConfirm = false;
                 gamePaused = false;
@@ -943,19 +991,19 @@ canvas.addEventListener('touchstart', function(e) {
         return;
     }
     
-    // Menu clicks
+    // 菜单点击
     if (gameState === 'menu') {
         for (let t = 0; t < e.touches.length; t++) {
             let tx = e.touches[t].clientX, ty = e.touches[t].clientY;
             
-            // Check if touch is on seed input box
+            // 检查触摸是否在种子输入框上
             let seedInput = document.getElementById('seedInput');
             let seedInputRect = seedInput ? seedInput.getBoundingClientRect() : null;
             let touchedOnSeedInput = seedInputRect && 
                 tx >= seedInputRect.left && tx <= seedInputRect.right &&
                 ty >= seedInputRect.top && ty <= seedInputRect.bottom;
             
-            // If touched outside seed input, blur the input
+            // 如果触摸在种子输入框外，让输入框失去焦点
             if (!touchedOnSeedInput && seedInput && document.activeElement === seedInput) {
                 seedInput.blur();
             }
@@ -972,7 +1020,7 @@ canvas.addEventListener('touchstart', function(e) {
             }
         }
     }
-    // Home button during racing (including countdown)
+    // 比赛中的主页按钮（包括倒计时）
     if ((gameState === 'racing' || gameState === 'countdown') && !finishResultsShown && homeButtonRect) {
         for (let t = 0; t < e.touches.length; t++) {
             let tx = e.touches[t].clientX, ty = e.touches[t].clientY;
@@ -1001,7 +1049,7 @@ canvas.addEventListener('touchstart', function(e) {
 
 canvas.addEventListener('touchmove', function(e) {
     e.preventDefault();
-    // Update positions of active touches
+    // 更新活动触摸的位置
     for (let t = 0; t < e.changedTouches.length; t++) {
         let touch = e.changedTouches[t];
         if (activeTouches[touch.identifier] !== undefined) {
@@ -1014,17 +1062,17 @@ canvas.addEventListener('touchmove', function(e) {
 
 canvas.addEventListener('touchend', function(e) {
     e.preventDefault();
-    // Remove ended touches from activeTouches
+    // 从activeTouches中移除结束的触摸
     for (let t = 0; t < e.changedTouches.length; t++) {
         delete activeTouches[e.changedTouches[t].identifier];
     }
-    // Recalculate touch state from remaining active touches
+    // 根据剩余的活动触摸重新计算触摸状态
     recalculateTouchState();
 }, { passive: false });
 
 canvas.addEventListener('touchcancel', function(e) {
     e.preventDefault();
-    // Cancel all touches
+    // 取消所有触摸
     activeTouches = {};
     recalculateTouchState();
 }, { passive: false });
@@ -1036,10 +1084,10 @@ function recalculateTouchState() {
     touchControls.down = false;
     touchPressed = { left: false, right: false, up: false, down: false };
     
-    // Re-setup touch areas to account for possible resize
+    // 重新设置触摸区域以适应可能的窗口调整
     setupTouchAreas();
     
-    // Check each active touch
+    // 检查每个活动触摸
     for (let id in activeTouches) {
         let touch = activeTouches[id];
         let tx = touch.x, ty = touch.y;
@@ -1069,11 +1117,11 @@ function handleTouches(touches) {
     }
 }
 
-// Mouse for menu
+// 鼠标菜单控制
 canvas.addEventListener('click', function(e) {
     initAudio();
     
-    // Exit confirmation dialog - always check first
+    // 退出确认对话框 - 始终优先检查
     if (showExitConfirm) {
         let mx = e.clientX, my = e.clientY;
         let boxW = 280;
@@ -1084,13 +1132,13 @@ canvas.addEventListener('click', function(e) {
         let btnY = boxY + boxH - 55;
         let btn1X = W / 2 - btnW - 15;
         let btn2X = W / 2 + 15;
-        // Cancel button
+        // 取消按钮
         if (mx >= btn1X && mx <= btn1X + btnW && my >= btnY && my <= btnY + btnH) {
             showExitConfirm = false;
             gamePaused = false;
             resumeAudio();
         }
-        // Confirm button
+        // 确认按钮
         if (mx >= btn2X && mx <= btn2X + btnW && my >= btnY && my <= btnY + btnH) {
             showExitConfirm = false;
             gamePaused = false;
@@ -1104,14 +1152,14 @@ canvas.addEventListener('click', function(e) {
     if (gameState === 'menu') {
         let mx = e.clientX, my = e.clientY;
         
-        // Check if click is on seed input box
+        // 检查点击是否在种子输入框上
         let seedInput = document.getElementById('seedInput');
         let seedInputRect = seedInput ? seedInput.getBoundingClientRect() : null;
         let clickedOnSeedInput = seedInputRect && 
             mx >= seedInputRect.left && mx <= seedInputRect.right &&
             my >= seedInputRect.top && my <= seedInputRect.bottom;
         
-        // If clicked outside seed input on mobile, blur the input
+        // 如果在移动端点击了种子输入框外部，让输入框失去焦点
         if (!clickedOnSeedInput && 'ontouchstart' in window && seedInput && document.activeElement === seedInput) {
             seedInput.blur();
         }
@@ -1127,7 +1175,7 @@ canvas.addEventListener('click', function(e) {
             }
         }
     }
-    // Home button during racing (including countdown)
+    // 比赛中的主页按钮（包括倒计时）
     if ((gameState === 'racing' || gameState === 'countdown') && !finishResultsShown && homeButtonRect) {
         let mx = e.clientX, my = e.clientY;
         if (mx >= homeButtonRect.x && mx <= homeButtonRect.x + homeButtonRect.w &&
@@ -1156,7 +1204,7 @@ canvas.addEventListener('mousemove', function(e) {
     lastMouseY = my;
     menuSelection = -1;
     
-    // Exit confirmation dialog hover detection
+    // 退出确认对话框悬停检测
     if (showExitConfirm) {
         let boxW = 280;
         let boxH = 140;
@@ -1168,7 +1216,7 @@ canvas.addEventListener('mousemove', function(e) {
         let btn2X = W / 2 + 15;
         
         if (mx >= btn1X && mx <= btn1X + btnW && my >= btnY && my <= btnY + btnH) {
-            menuSelection = 0; // Cancel button
+            menuSelection = 0; // 取消按钮
         } else if (mx >= btn2X && mx <= btn2X + btnW && my >= btnY && my <= btnY + btnH) {
             menuSelection = 1; // Confirm button
         }
@@ -1187,13 +1235,13 @@ canvas.addEventListener('mousemove', function(e) {
     }
 });
 
-// ==================== AUDIO ====================
+// ==================== 音频 ====================
 function initAudio() {
     if (audioInitialized) return;
     audioInitialized = true;
     try {
         audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-        // Master compressor to prevent clipping
+        // 主压缩器防止削波
         masterCompressor = audioCtx.createDynamicsCompressor();
         masterCompressor.threshold.value = -20;
         masterCompressor.knee.value = 20;
@@ -1202,7 +1250,7 @@ function initAudio() {
         masterCompressor.release.value = 0.15;
         masterCompressor.connect(audioCtx.destination);
 
-        // Engine: triangle wave (smoother than sawtooth)
+        // 引擎：三角波（比锯齿波更平滑）
         engineOsc = audioCtx.createOscillator();
         engineOsc.type = 'triangle';
         engineOsc.frequency.value = 100;
@@ -1217,7 +1265,7 @@ function initAudio() {
         engineGain.connect(masterCompressor);
         engineOsc.start();
 
-        // Wind noise
+        // 风噪声
         let bufferSize = audioCtx.sampleRate * 2;
         let noiseBuffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
         let output = noiseBuffer.getChannelData(0);
@@ -1238,7 +1286,7 @@ function initAudio() {
         windGain.connect(masterCompressor);
         windNode.start();
 
-        // Brake noise (wind-like friction sound)
+        // 刹车噪声（类似风的摩擦声）
         let brakeBufferSize = audioCtx.sampleRate * 2;
         let brakeNoiseBuffer = audioCtx.createBuffer(1, brakeBufferSize, audioCtx.sampleRate);
         let brakeOutput = brakeNoiseBuffer.getChannelData(0);
@@ -1429,7 +1477,7 @@ function stopGameSounds() {
     if (windGain) windGain.gain.setTargetAtTime(0, t, 0.05);
     if (brakeGain) brakeGain.gain.setTargetAtTime(0, t, 0.05);
     
-    // Stop all NPC engine sounds
+    // 停止所有NPC引擎声音
     if (NPC_AUDIO_ENABLED) {
         for (let i = 0; i < npcAudioNodes.length; i++) {
             if (npcAudioNodes[i]) {
@@ -1443,17 +1491,17 @@ function stopGameSounds() {
 function destroyAudio() {
     if (!audioCtx) return;
     
-    // Close audio context - this automatically cleans up all nodes
+    // 关闭音频上下文 - 这会自动清理所有节点
     try {
         audioCtx.close();
     } catch(e) {}
     
-    // Reset audio state
+    // 重置音频状态
     audioCtx = null;
     audioInitialized = false;
     audioSuspended = false;
     
-    // Clear NPC audio nodes array
+    // 清空NPC音频节点数组
     npcAudioNodes = [];
 }
 
@@ -1489,7 +1537,7 @@ function playCountdownBeep(isGo) {
         osc.type = 'sine';
         let g = audioCtx.createGain();
         if (isGo) {
-            // Higher pitch, longer, for "GO!"
+            // 更高音调、更长，用于"GO!"
             osc.frequency.setValueAtTime(523, now);
             osc.frequency.setTargetAtTime(659, now + 0.05, 0.03);
             g.gain.setValueAtTime(0.12, now);
@@ -1507,7 +1555,7 @@ function playCountdownBeep(isGo) {
     } catch(e) {}
 }
 
-// ==================== MATH HELPERS ====================
+// ==================== 数学辅助函数 ====================
 function lerp(a, b, t) { return a + (b - a) * t; }
 function clamp(v, mn, mx) { return Math.max(mn, Math.min(mx, v)); }
 function dist(x1, y1, x2, y2) { return Math.sqrt((x2-x1)*(x2-x1) + (y2-y1)*(y2-y1)); }
@@ -1523,34 +1571,34 @@ function normalizeAngle(a) {
     return a;
 }
 
-// ==================== SEEDED RANDOM GENERATOR ====================
+// ==================== 种子随机数生成器 ====================
 let currentSeed = null;
 let seedRandomState = 0;
 let useSeededRandom = false;
 
-// Simple hash function for string seeds
+// 字符串种子的简单哈希函数
 function hashString(str) {
     let hash = 0;
     for (let i = 0; i < str.length; i++) {
         const char = str.charCodeAt(i);
         hash = ((hash << 5) - hash) + char;
-        hash = hash & 0xFFFFFFFF; // Keep within 32 bits
+        hash = hash & 0xFFFFFFFF; // 保持在32位内
     }
-    return Math.abs(hash >>> 0); // Convert to unsigned 32-bit
+    return Math.abs(hash >>> 0); // 转换为无符号32位
 }
 
-// Set the seed for map generation
+// 设置地图生成的种子
 function setMapSeed(seed) {
-    // Reset seed state first
+    // 首先重置种子状态
     useSeededRandom = false;
     seedRandomState = 0;
     
     if (seed === null || seed === undefined || seed === '') {
-        // Generate random seed
+        // 生成随机种子
         seed = Math.floor(Math.random() * 1000000).toString(36).toUpperCase();
     }
     currentSeed = seed.toString().toUpperCase();
-    // Initialize random state from seed
+    // 从种子初始化随机状态
     let numericSeed = hashString(currentSeed);
     seedRandomState = numericSeed % 2147483647;
     if (seedRandomState <= 0) seedRandomState += 2147483646;
@@ -1567,7 +1615,7 @@ function setDerivedSeed(stepName) {
     console.log('Derived seed for', stepName, ':', seedRandomState);
 }
 
-// Get current map seed
+// 获取当前地图种子
 function getMapSeed() {
     return currentSeed || 'RANDOM';
 }
@@ -1577,13 +1625,13 @@ function enableSeededRandom(enable) {
     useSeededRandom = enable;
 }
 
-// Seeded random number generator (0 to 1)
+// 种子随机数生成器（0到1）
 function seededRandom() {
     seedRandomState = (seedRandomState * 16807) % 2147483647;
     return (seedRandomState - 1) / 2147483646;
 }
 
-// Seeded random range [a, b)
+// 种子随机范围 [a, b)
 function randRange(a, b) {
     if (useSeededRandom) {
         return a + seededRandom() * (b - a);
@@ -1591,12 +1639,12 @@ function randRange(a, b) {
     return a + Math.random() * (b - a);
 }
 
-// Seeded random integer [a, b]
+// 种子随机整数 [a, b]
 function randInt(a, b) {
     return Math.floor(randRange(a, b + 1));
 }
 
-// Seeded random boolean with given probability
+// 种子随机布尔值（给定概率）
 function randBool(prob) {
     if (useSeededRandom) {
         return seededRandom() < prob;
@@ -1604,7 +1652,7 @@ function randBool(prob) {
     return Math.random() < prob;
 }
 
-// Seeded random choice: -1 or 1
+// 种子随机选择：-1或1
 function randSign() {
     return randBool(0.5) ? 1 : -1;
 }
@@ -1617,7 +1665,7 @@ function segmentIntersect(ax,ay,bx,by,cx,cy,dx,dy) {
     return t >= 0 && t <= 1 && u >= 0 && u <= 1;
 }
 
-// ==================== CATMULL-ROM SPLINE ====================
+// ==================== CATMULL-ROM样条曲线 ====================
 function catmullRom(p0, p1, p2, p3, t) {
     let t2 = t * t, t3 = t2 * t;
     return {
@@ -1634,7 +1682,7 @@ function catmullRomDerivative(p0, p1, p2, p3, t) {
     };
 }
 
-// ==================== TRACK GENERATION ====================
+// ==================== 赛道生成 ====================
 function segmentsIntersect(a, b, c, d) {
     let denom = (b.x - a.x) * (d.y - c.y) - (b.y - a.y) * (d.x - c.x);
     if (Math.abs(denom) < 1e-10) return false;
@@ -1643,7 +1691,7 @@ function segmentsIntersect(a, b, c, d) {
     return t >= 0 && t <= 1 && u >= 0 && u <= 1;
 }
 
-// Calculate distance from point to line segment
+// 计算点到线段的距离
 function pointToSegmentDistance(point, segStart, segEnd) {
     let dx = segEnd.x - segStart.x;
     let dy = segEnd.y - segStart.y;
@@ -1667,7 +1715,7 @@ function pointToSegmentDistance(point, segStart, segEnd) {
     return Math.sqrt(px * px + py * py);
 }
 
-// Check if path points have self-intersection
+// 检查路径点是否有自相交
 function pathHasIntersection(path, skipNearby) {
     let len = path.length;
     for (let i = 0; i < len - 1; i++) {
@@ -1681,13 +1729,13 @@ function pathHasIntersection(path, skipNearby) {
 }
 
 function generateSprintTrack() {
-    // Reset all continuation states for new track
+    // 为新赛道重置所有延续状态
     window.arcContinuation = { count: 0, amount: 0 };
     window.hairpinContinuation = { count: 0, amount: 0 };
     window.bigTurnContinuation = { count: 0, amount: 0 };
     window.sCurveContinuation = { count: 0, amount: 0, phase: 0 };
     
-    // Set derived seed for track generation
+    // 为赛道生成设置派生种子
     setDerivedSeed('TRACK');
     
     let maxAttempts = 30;
@@ -1699,7 +1747,7 @@ function generateSprintTrack() {
         let x = 0, y = 0;
         let valid = true;
         
-        // Track if last segment was a curve to enforce longer straights after curves
+        // 跟踪上一个段落是否为弯道，以在弯道后强制更长的直道
         let lastWasCurve = false;
         let straightAfterCurveCount = 0;
         
@@ -1711,9 +1759,9 @@ function generateSprintTrack() {
             let turnAmount;
             let isCurve = false;
 
-            // If we just had a curve, 25% chance to enforce a longer straight section
+            // 如果刚过弯道，25%概率强制更长的直道段落
             if (lastWasCurve && straightAfterCurveCount < 2 && randBool(0.25)) {
-                // Force a straight section after curve (minimum 2 segments)
+                // 强制弯道后的直道段落（最少2段）
                 turnAmount = 0;
                 segLen = randRange(700, 1100);
                 straightAfterCurveCount++;
@@ -1725,19 +1773,19 @@ function generateSprintTrack() {
                 turnAmount = randRange(0.6, 0.9) * hairpinDir;
                 segLen = randRange(400, 600);
                 isCurve = true;
-                // Mark for hairpin continuation - opposite direction next
+                // 标记发卡弯延续 - 下一个方向相反
                 if (!window.hairpinContinuation) window.hairpinContinuation = { count: 0, amount: 0 };
                 window.hairpinContinuation.count = randInt(2, 3);
                 window.hairpinContinuation.amount = -turnAmount * 0.7; // Opposite direction, slightly less
             }
-            // Continue hairpin turn (second part of U-shape)
+            // 继续发卡弯（U形的第二部分）
             else if (window.hairpinContinuation && window.hairpinContinuation.count > 0) {
                 turnAmount = window.hairpinContinuation.amount;
                 segLen = randRange(400, 600);
                 isCurve = true;
                 window.hairpinContinuation.count--;
             }
-            // Big 90-degree turn for square-like track (25% chance)
+            // 大90度转弯，形成方形赛道（25%概率）
             else if (r < 0.37) {
                 let turnDir = randSign();
                 turnAmount = randRange(0.8, 1.2) * turnDir; // Large turn angle
@@ -1747,33 +1795,33 @@ function generateSprintTrack() {
                 window.bigTurnContinuation.count = 1;
                 window.bigTurnContinuation.amount = turnAmount;
             }
-            // Continue big turn - straight section to complete 90-degree
+            // 继续大转弯 - 直道段落完成90度
             else if (window.bigTurnContinuation && window.bigTurnContinuation.count > 0) {
                 turnAmount = 0;
                 segLen = randRange(600, 900); // Increased from 500-700
                 window.bigTurnContinuation.count = 0;
             }
-            // Large arc / near-circle curve (5% chance)
+            // 大弧形/近圆形弯道（5%概率）
             else if (r < 0.42) {
-                // Generate a continuous arc by setting a consistent small turn
-                // This creates near-circular large radius curves
+                // 通过设置一致的小转弯生成连续弧形
+                // 这会创建近乎圆形的大半径弯道
                 let arcDir = randSign();
                 turnAmount = randRange(0.08, 0.15) * arcDir;
                 segLen = randRange(500, 800);
                 isCurve = true;
-                // Mark for continuation in next segments
+                // 标记后续段落继续
                 if (!window.arcContinuation) window.arcContinuation = { count: 0, amount: 0 };
                 window.arcContinuation.count = randInt(3, 6);
                 window.arcContinuation.amount = turnAmount;
             }
-            // Continue previous arc
+            // 继续之前的弧形
             else if (window.arcContinuation && window.arcContinuation.count > 0) {
                 turnAmount = window.arcContinuation.amount;
                 segLen = randRange(500, 800);
                 isCurve = true;
                 window.arcContinuation.count--;
             }
-            // S-curve pattern - realistic S-bend (first turn) - 13% chance
+            // S形弯道模式 - 逼真的S弯（第一个转弯）- 13%概率
             else if (r < 0.55) {
                 turnAmount = randRange(0.7, 1.0) * randSign();
                 if (!window.sCurveContinuation) window.sCurveContinuation = { count: 0, amount: 0, phase: 0 };
@@ -1783,14 +1831,14 @@ function generateSprintTrack() {
                 segLen = randRange(500, 700);
                 isCurve = true;
             }
-            // S-curve - straight middle section
+            // S弯 - 中间直道段落
             else if (window.sCurveContinuation && window.sCurveContinuation.count > 0 && window.sCurveContinuation.phase === 'turn1') {
                 turnAmount = 0;
                 segLen = randRange(500, 700); // Increased from 400-600
                 window.sCurveContinuation.count = 1;
                 window.sCurveContinuation.phase = 'straight';
             }
-            // S-curve - second opposite turn
+            // S弯 - 第二个反向转弯
             else if (window.sCurveContinuation && window.sCurveContinuation.count > 0 && window.sCurveContinuation.phase === 'straight') {
                 turnAmount = randRange(0.7, 1.0) * (window.sCurveContinuation.amount > 0 ? -1 : 1);
                 segLen = randRange(500, 700);
@@ -1798,23 +1846,23 @@ function generateSprintTrack() {
                 window.sCurveContinuation.phase = 0;
                 isCurve = true;
             }
-            // Long straight (10% chance)
+            // 长直道（10%概率）
             else if (r < 0.65) {
                 turnAmount = 0;
                 segLen = randRange(800, 1200);
             }
-            // Gentle curves (15% chance)
+            // 缓和弯道（15%概率）
             else if (r < 0.80) {
                 turnAmount = randRange(-0.35, 0.35);
                 isCurve = Math.abs(turnAmount) > 0.15;
             }
-            // Sharper turns (remaining chance)
+            // 较急转弯（剩余概率）
             else {
                 turnAmount = randRange(-0.5, 0.5);
                 isCurve = Math.abs(turnAmount) > 0.15;
             }
             
-            // Update curve tracking
+            // 更新弯道跟踪
             if (isCurve) {
                 lastWasCurve = true;
                 straightAfterCurveCount = 0;
@@ -1824,7 +1872,7 @@ function generateSprintTrack() {
             let nx = x + Math.cos(newAngle) * segLen;
             let ny = y + Math.sin(newAngle) * segLen;
             
-            // Self-intersection check on nodes (skip last 8 segments for better detection)
+            // 节点自相交检查（跳过最后8个段落以获得更好的检测）
             let hasIntersection = false;
             if (nodes.length > 10) {
                 let newSegStart = { x: x, y: y };
@@ -1837,7 +1885,7 @@ function generateSprintTrack() {
                     }
                 }
                 
-                // Also check if new segment comes too close to existing nodes (proximity check)
+                // 同时检查新段落是否太接近现有节点（邻近检查）
                 if (!hasIntersection) {
                     for (let j = 0; j < nodes.length - 8; j++) {
                         let node = nodes[j];
@@ -1851,7 +1899,7 @@ function generateSprintTrack() {
             }
             
             if (hasIntersection) {
-                // Try to find a valid direction with more retries
+                // 尝试更多重试来找到有效方向
                 let found = false;
                 for (let retry = 0; retry < 15; retry++) {
                     turnAmount = randRange(-0.4, 0.4);
@@ -1870,7 +1918,7 @@ function generateSprintTrack() {
                         }
                     }
                     
-                    // Also check proximity in retry
+                    // 重试时也检查邻近
                     if (!hasIntersection) {
                         for (let j = 0; j < nodes.length - 8; j++) {
                             let node = nodes[j];
@@ -1889,7 +1937,7 @@ function generateSprintTrack() {
                 }
                 
                 if (!found) {
-                    // Continue in same direction
+                    // 继续同一方向
                     nx = x + Math.cos(baseAngle) * segLen;
                     ny = y + Math.sin(baseAngle) * segLen;
                     newAngle = baseAngle;
@@ -1901,31 +1949,31 @@ function generateSprintTrack() {
             baseAngle = newAngle;
         }
         
-        // Build path and verify no intersection
+        // 构建路径并验证无相交
         let testPath = buildTrackPath(nodes, false);
         
-        // Check path for intersections (skip nearby segments - 50 points apart for stricter check)
+        // 检查路径相交（跳过邻近段落 - 间隔50点进行更严格的检查）
         if (!pathHasIntersection(testPath, 50)) {
             return nodes;
         }
     }
     
-    // Fallback: return a track with curves
+    // 备用：返回带有弯道的赛道
     let nodes = [];
     let x = 0, y = 0, angle = 0;
     let curvePhase = 0;
     for (let i = 0; i < 80; i++) {
         nodes.push({ x: x, y: y });
 
-        // Add some curves to fallback track
+        // 为备用赛道添加一些弯道
         if (i % 15 === 5) {
-            // S-curve turn
+            // S形弯道
             angle += randRange(0.6, 0.9) * randSign();
         } else if (i % 15 === 10) {
-            // Opposite turn
+            // 反向转弯
             angle += randRange(0.6, 0.9) * randSign();
         } else {
-            // Gentle variation
+            // 缓和变化
             angle += randRange(-0.15, 0.15);
         }
 
@@ -1989,17 +2037,17 @@ function buildEdges(path) {
 
 
 
-// Detect self-intersections in the main track and return exclusion zones
+// 检测主赛道的自相交并返回排除区域
 function detectSelfIntersections(pathLength) {
     let zones = [];
-    let checkInterval = Math.max(50, Math.floor(pathLength / 20)); // Check every 50 points
-    let searchRadius = 150; // Search for intersections within this range
+    let checkInterval = Math.max(50, Math.floor(pathLength / 20)); // 每50点检查一次
+    let searchRadius = 150; // 在此范围内搜索相交
     
     for (let i = 0; i < pathLength; i += checkInterval) {
         let p1 = trackPath[i];
         if (!p1) continue;
         
-        // Look for other points that are close but far in index (not adjacent)
+        // 寻找距离近但索引相距较远的其他点（非相邻）
         for (let j = i + searchRadius; j < Math.min(pathLength, i + searchRadius * 3); j++) {
             let p2 = trackPath[j];
             if (!p2) continue;
@@ -2008,9 +2056,9 @@ function detectSelfIntersections(pathLength) {
             let dy = p1.y - p2.y;
             let dist = Math.sqrt(dx * dx + dy * dy);
             
-            // If points are close but far apart in index, it's a self-intersection
+            // 如果点距离近但索引相距远，则为自相交
             if (dist < TRACK_WIDTH * 2.5) {
-                // Create exclusion zone around both points
+                // 在两个点周围创建排除区域
                 let zoneSize = 50;
                 zones.push({
                     start: Math.max(0, i - zoneSize),
@@ -2024,7 +2072,7 @@ function detectSelfIntersections(pathLength) {
         }
     }
     
-    // Merge overlapping zones
+    // 合并重叠区域
     if (zones.length === 0) return [];
     
     zones.sort((a, b) => a.start - b.start);
@@ -2042,7 +2090,7 @@ function detectSelfIntersections(pathLength) {
     return merged;
 }
 
-// Global variable to store self-intersection zones
+// 存储自相交区域的全局变量
 let selfIntersectionZones = [];
 
 function generateTrack() {
@@ -2235,7 +2283,7 @@ function updateFarNPC(car, dt) {
     car.direction = p.dir;
 }
 
-// ==================== MINIMAP BOUNDS ====================
+// ==================== 小地图边界 ====================
 let minimapBounds = { minTX: 0, maxTX: 0, minTY: 0, maxTY: 0, scale: 1, cx: 0, cy: 0 };
 
 function computeMinimapBounds() {
@@ -2257,11 +2305,11 @@ function computeMinimapBounds() {
     };
 }
 
-// ==================== BRANCH PATHS ====================
-// Branch path bounding boxes
+// ==================== 分支路径 ====================
+// 分支路径边界框
 let branchBounds = [];
 
-// Spatial grid for branch point lookups (replaces linear scan)
+// 分支点查询的空间网格（替代线性扫描）
 const BRANCH_GRID_SIZE = 100;
 let branchGrid = {};
 
@@ -2275,7 +2323,7 @@ function buildBranchGrid() {
     for (let i = 0; i < branchPaths.length; i++) {
         let bp = branchPaths[i];
         if (!bp.path) continue;
-        // Sample every other point for grid (density is sufficient)
+        // 每隔一个点采样到网格（密度足够）
         for (let j = 0; j < bp.path.length; j += 2) {
             let pt = bp.path[j];
             let key = branchGridKey(pt.x, pt.y);
@@ -2285,13 +2333,13 @@ function buildBranchGrid() {
     }
 }
 
-// Spatial cache for branch checking
+// 分支检查的空间缓存
 let branchCache = { x: 0, y: 0, result: false, age: 0 };
 const BRANCH_CACHE_SIZE = 100;
 const BRANCH_CACHE_MAX_AGE = 5;
 
 function generateBranches() {
-    // Set derived seed for branch generation
+    // 为分支生成设置派生种子
     setDerivedSeed('BRANCHES');
     
     branchPaths = [];
@@ -2320,23 +2368,23 @@ function generateBranches() {
             let midCount = randInt(8, 14);
             let offsetDist = randRange(300, 600);
             
-            // Extend branch start point into main track (for smooth connection)
+            // 将分支起点延伸到主赛道（实现平滑连接）
             let extendDist = TRACK_WIDTH * 0.6;
             let startExtendX = sp.x - Math.cos(sp.dir) * extendDist;
             let startExtendY = sp.y - Math.sin(sp.dir) * extendDist;
             branchNodes.push({ x: startExtendX, y: startExtendY });
             
-            // Original start point
+            // 原始起点
             branchNodes.push({ x: sp.x, y: sp.y });
             
-            // Create branch paths - curve out then curve back (large arc)
+            // 创建分支路径 - 先向外弯曲再弯回（大弧形）
             for (let i = 1; i < midCount; i++) {
                 let t = i / midCount;
                 let baseX = lerp(sp.x, rp.x, t);
                 let baseY = lerp(sp.y, rp.y, t);
                 
-                // Curve out from main road then curve back - creates large arc
-                // Use sin(PI * t) to have small offset at start/end, max at middle
+                // 从主路向外弯曲再弯回 - 创建大弧形
+                // 使用sin(PI * t)使起点/终点偏移小，中间最大
                 let curveOutFactor = Math.sin(t * Math.PI); // 0 -> 1 -> 0
                 let perpX = sp.nx * side * offsetDist * curveOutFactor;
                 let perpY = sp.ny * side * offsetDist * curveOutFactor;
@@ -2346,10 +2394,10 @@ function generateBranches() {
                 branchNodes.push({ x: bx, y: by });
             }
             
-            // Original end point
+            // 原始终点
             branchNodes.push({ x: rp.x, y: rp.y });
             
-            // Extend branch end point into main track (for smooth connection)
+            // 将分支终点延伸到主赛道（实现平滑连接）
             let endExtendX = rp.x + Math.cos(rp.dir) * extendDist;
             let endExtendY = rp.y + Math.sin(rp.dir) * extendDist;
             branchNodes.push({ x: endExtendX, y: endExtendY });
@@ -2381,7 +2429,7 @@ function generateBranches() {
     }
 }
 
-// ==================== SCENERY ====================
+// ==================== 场景 ====================
 function isNearBranch(x, y, margin) {
     for (let i = 0; i < branchPaths.length; i++) {
         let bb = branchBounds[i];
@@ -2405,11 +2453,11 @@ function isNearBranch(x, y, margin) {
 function isInSelfIntersectionZone(x, y, margin) {
     if (selfIntersectionZones.length === 0) return false;
     
-    // Find closest track point
+    // 找到最近的赛道点
     let closest = findClosestTrackPoint(x, y);
     let idx = closest.index;
     
-    // Check if this index is in any self-intersection zone
+    // 检查此索引是否在任何自相交区域内
     for (let zone of selfIntersectionZones) {
         if (idx >= zone.start - margin && idx <= zone.end + margin) {
             return true;
@@ -2418,7 +2466,7 @@ function isInSelfIntersectionZone(x, y, margin) {
     return false;
 }
 
-// ==================== SCENERY SPATIAL GRID ====================
+// ==================== 场景空间网格 ====================
 const SCENERY_GRID_SIZE = 400;
 let sceneryGrid = {};
 
@@ -2459,12 +2507,12 @@ function generateScenery() {
     sceneryItems = [];
     let step = Math.max(1, Math.floor(trackPath.length / 1200));
 
-    // Disable seeded random for scenery (trees, people are not seed-controlled)
+    // 为场景禁用种子随机数（树木、人物不受种子控制）
     let wasSeeded = useSeededRandom;
     let savedSeedState = seedRandomState;
     enableSeededRandom(false);
 
-    // Generate trees and people - using object pool
+    // 使用对象池生成树木和人物
     for (let i = 0; i < trackPath.length; i += step) {
         let p = trackPath[i];
         for (let side = -1; side <= 1; side += 2) {
@@ -2508,11 +2556,11 @@ function generateScenery() {
         }
     }
     
-    // Restore seeded random state
+    // 恢复种子随机数状态
     enableSeededRandom(wasSeeded);
     seedRandomState = savedSeedState;
 
-    // Safety pass: remove any tree/people that ended up overlapping road or branch - return to pool
+    // 安全检查：移除任何与赛道或分支重叠的树木/人物 - 返回对象池
     let safeItems = [];
     for (let i = 0; i < sceneryItems.length; i++) {
         let item = sceneryItems[i];
@@ -2538,12 +2586,12 @@ function generateScenery() {
     }
     sceneryItems = safeItems;
 
-    // Add extra people near start and finish lines - using object pool
-    const startFinishRange = 150; // distance in meters
+    // 在起点和终点线附近添加额外人群 - 使用对象池
+    const startFinishRange = 150; // 距离（米）
     const startIdx = 0;
     const finishIdx = trackPath.length - 1;
 
-    // Start line area
+    // 起点线区域
     for (let i = Math.max(0, startIdx - 5); i <= Math.min(trackPath.length - 1, startIdx + 5); i++) {
         let p = trackPath[i];
         for (let side = -1; side <= 1; side += 2) {
@@ -2575,7 +2623,7 @@ function generateScenery() {
         }
     }
 
-    // Finish line area
+    // 终点线区域
     for (let i = Math.max(0, finishIdx - 5); i <= Math.min(trackPath.length - 1, finishIdx + 5); i++) {
         let p = trackPath[i];
         for (let side = -1; side <= 1; side += 2) {
@@ -2607,25 +2655,25 @@ function generateScenery() {
         }
     }
 
-    // Add trees outside start and finish lines (beyond the track) - using object pool
-    // Start line outer trees - before the start line in a circular arc
+    // 在起点和终点线外侧添加树木（赛道外围）- 使用对象池
+    // 起点线外侧树木 - 在起点线前方呈圆弧形排列
     let startP = trackPath[startIdx];
     let startDir = startP.dir;
     
-    // Circular arc around start line
+    // 起点线周围的圆弧
     const startArcRadius = 250;
     const startTreeCount = 18;
     
     for (let i = 0; i < startTreeCount; i++) {
-        // Calculate angle for circular distribution
-        let angleOffset = (i / startTreeCount) * Math.PI * 1.5 - Math.PI * 0.75; // 135-degree arc
-        let angle = startDir + Math.PI + angleOffset; // Opposite direction of track
+        // 计算圆弧分布的角度
+        let angleOffset = (i / startTreeCount) * Math.PI * 1.5 - Math.PI * 0.75; // 135度弧形
+        let angle = startDir + Math.PI + angleOffset; // 与赛道方向相反
         
-        let distance = startArcRadius + randRange(-50, 50); // Slight variation in distance
+        let distance = startArcRadius + randRange(-50, 50); // 距离略有变化
         let sx = startP.x + Math.cos(angle) * distance;
         let sy = startP.y + Math.sin(angle) * distance;
         
-        // Ensure trees are outside track
+        // 确保树木在赛道外
         let closest = findClosestTrackPoint(sx, sy);
         let distToTrack = Math.abs(getTrackDistance(sx, sy, closest.index));
         if (distToTrack < TRACK_WIDTH / 2 + 30) continue; // Keep trees outside track
@@ -2643,36 +2691,36 @@ function generateScenery() {
         tree.lastVisibleTime = 0;
         sceneryItems.push(tree);
     }
-
-    // Finish line outer trees - beyond the finish line in a circular arc
+    
+    // 终点线外侧树木 - 在终点线后方呈扩大的圆弧形排列
     let finishP = trackPath[finishIdx];
     let finishDir = finishP.dir;
     
-    // Circular arc around finish line (expanded)
-    const finishArcRadius = 400; // Increased radius to 400
-    const finishTreeCount = 24; // Increased tree count
+    // 终点线周围的圆弧（扩大）
+    const finishArcRadius = 400; // 增加半径到400
+    const finishTreeCount = 24; // 增加树木数量
     
     for (let i = 0; i < finishTreeCount; i++) {
-        // Calculate angle for circular distribution - expanded arc
-        let angleOffset = (i / finishTreeCount) * Math.PI * 2 - Math.PI; // 180-degree arc (semi-circle)
-        let angle = finishDir + angleOffset; // Same direction as track
+        // 计算圆弧分布的角度 - 扩大的弧形
+        let angleOffset = (i / finishTreeCount) * Math.PI * 2 - Math.PI; // 180度弧形（半圆）
+        let angle = finishDir + angleOffset; // 与赛道方向相同
         
-        let distance = finishArcRadius + randRange(-100, 100); // More variation in distance
+        let distance = finishArcRadius + randRange(-100, 100); // 距离变化更大
         let sx = finishP.x + Math.cos(angle) * distance;
         let sy = finishP.y + Math.sin(angle) * distance;
         
-        // Ensure trees are outside track
+        // 确保树木在赛道外
         let closest = findClosestTrackPoint(sx, sy);
         let distToTrack = Math.abs(getTrackDistance(sx, sy, closest.index));
-        if (distToTrack < TRACK_WIDTH / 2 + 50) continue; // Keep trees further outside track
+        if (distToTrack < TRACK_WIDTH / 2 + 50) continue; // 让树木离赛道更远
         
-        // Skip if tree would overlap with road
+        // 跳过会与道路重叠的树木
         if (distToTrack < TRACK_WIDTH / 2 + 60) continue;
         
         let tree = treePool.get();
         tree.x = sx;
         tree.y = sy;
-        tree.size = randRange(25, 55); // Slightly larger trees
+        tree.size = randRange(25, 55); // 稍大的树木
         tree.shade = randRange(0.7, 1.0);
         tree.cachedColor = 'rgba(46,' + Math.floor(139 * tree.shade) + ',56,0.9)';
         tree.visible = false;
@@ -2680,8 +2728,8 @@ function generateScenery() {
         sceneryItems.push(tree);
     }
 
-    // Add sparse trees in empty areas of the map
-    // First, calculate track bounds to know where to generate trees
+// 在地图空白区域添加稀疏的树木
+    // 首先计算赛道边界以知道在哪里生成树木
     let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
     for (let p of trackPath) {
         if (p.x < minX) minX = p.x;
@@ -2690,31 +2738,31 @@ function generateScenery() {
         if (p.y > maxY) maxY = p.y;
     }
     
-    // Expand bounds to cover more area
+    // 扩大边界以覆盖更多区域
     let padding = 1000;
     minX -= padding;
     maxX += padding;
     minY -= padding;
     maxY += padding;
     
-    // Generate sparse trees in empty areas - using object pool
-    const sparseTreeAttempts = 800; // Number of attempts to place trees (increased for denser trees)
-    const minTreeDistance = 100; // Minimum distance between trees (decreased for denser trees)
+    // 使用对象池在空白区域生成稀疏的树木
+    const sparseTreeAttempts = 800; // 尝试放置树木的次数（增加以获得更密集的树木）
+    const minTreeDistance = 100; // 树木之间的最小距离（减少以获得更密集的树木）
     
     for (let i = 0; i < sparseTreeAttempts; i++) {
-        // Random position within bounds
+        // 边界内的随机位置
         let sx = randRange(minX, maxX);
         let sy = randRange(minY, maxY);
         
-        // Check distance to track
+        // 检查与赛道的距离
         let closest = findClosestTrackPoint(sx, sy);
         let distToTrack = Math.abs(getTrackDistance(sx, sy, closest.index));
-        if (distToTrack < TRACK_WIDTH / 2 + 100) continue; // Keep away from track
+        if (distToTrack < TRACK_WIDTH / 2 + 100) continue; // 与赛道保持距离
         
-        // Check if on branch
+        // 检查是否在分支上
         if (isOnBranch(sx, sy)) continue;
         
-        // Check distance to other scenery items
+        // 检查与其他场景物品的距离
         let tooClose = false;
         for (let item of sceneryItems) {
             let dx = sx - item.x;
@@ -2727,10 +2775,10 @@ function generateScenery() {
         }
         if (tooClose) continue;
         
-        // Check if near branch
+        // 检查是否靠近分支
         if (isNearBranch(sx, sy, 100)) continue;
         
-        // If all checks pass, add the tree using object pool
+        // 如果所有检查都通过，使用对象池添加树木
         let tree = treePool.get();
         tree.x = sx;
         tree.y = sy;
@@ -2745,8 +2793,8 @@ function generateScenery() {
     buildSceneryGrid();
 }
 
-// ==================== CLOSEST TRACK POINT ====================
-// Spatial grid index for fast track point queries
+// ==================== 最近赛道点 ====================
+// 用于快速赛道点查询的空间网格索引
 const TRACK_GRID_SIZE = 200;
 let trackGrid = {};
 
@@ -2766,18 +2814,18 @@ function buildTrackGrid() {
     }
 }
 
-// Closest track point cache
+// 最近赛道点缓存
 let lastClosestCache = { x: 0, y: 0, index: 0, dist: Infinity };
 const CACHE_RADIUS = 200;
 
-// Optimized track point cache with larger radius and index-based validation
+// 使用更大半径和基于索引验证的优化赛道点缓存
 const TRACK_CACHE_RADIUS = 250;
 const TRACK_CACHE_MAX_AGE = 3;
 let trackCache = { x: 0, y: 0, index: 0, dist: Infinity, age: 0 };
 let trackPointResult = { index: 0, dist: 0 };
 
 function findClosestTrackPoint(x, y) {
-    // Check if cached result is still valid
+    // 检查缓存结果是否仍然有效
     let cacheDist = Math.sqrt((x - trackCache.x) ** 2 + (y - trackCache.y) ** 2);
     if (cacheDist < TRACK_CACHE_RADIUS && trackCache.dist < Infinity && trackCache.age < TRACK_CACHE_MAX_AGE) {
         trackCache.age++;
@@ -2786,14 +2834,14 @@ function findClosestTrackPoint(x, y) {
         return trackPointResult;
     }
 
-    // Use spatial grid for fast lookup
+    // 使用空间网格进行快速查找
     let gx = Math.floor(x / TRACK_GRID_SIZE);
     let gy = Math.floor(y / TRACK_GRID_SIZE);
     
     let bestDist = Infinity;
     let bestIdx = 0;
     
-    // Check 9 neighboring cells
+    // 检查9个相邻单元格
     for (let dx = -1; dx <= 1; dx++) {
         for (let dy = -1; dy <= 1; dy++) {
             let key = (gx + dx) + "_" + (gy + dy);
@@ -2812,7 +2860,7 @@ function findClosestTrackPoint(x, y) {
         }
     }
     
-    // Fallback to coarse search if grid lookup failed
+    // 如果网格查找失败，回退到粗略搜索
     if (bestDist === Infinity) {
         let coarseStep = 10;
         for (let i = 0; i < trackPath.length; i += coarseStep) {
@@ -2822,7 +2870,7 @@ function findClosestTrackPoint(x, y) {
             if (d < bestDist) { bestDist = d; bestIdx = i; }
         }
         
-        // Fine search around best coarse result
+        // 在最佳粗略结果周围进行精细搜索
         let fineStart = Math.max(0, bestIdx - coarseStep);
         let fineEnd = Math.min(trackPath.length - 1, bestIdx + coarseStep);
         for (let i = fineStart; i <= fineEnd; i++) {
@@ -2852,40 +2900,41 @@ function getTrackDistance(x, y, idx) {
     let p = trackPath[idx];
     let dx = x - p.x;
     let dy = y - p.y;
-    // Signed distance: positive = left side, negative = right side
+    // 有符号距离：正数 = 左侧，负数 = 右侧
     return dx * p.nx + dy * p.ny;
 }
 
-// Check if car's physical collision box is on road surface
+// 检查汽车的物理碰撞框是否在道路表面上
 function isCarOnRoadSurface(car) {
-    // Define car's collision box (4 corners + center)
-    const carHalfWidth = CAR_WIDTH / 2;
+    // 定义汽车的道路检测碰撞框（较窄的宽度）
+    // 使用实际宽度的70%进行更严格的道路边界检测
+    const carHalfWidth = CAR_WIDTH * 0.15; // 半宽的30%
     const carHalfLength = CAR_LENGTH / 2;
     
-    // Calculate car's 4 corner points based on direction
+    // 根据方向计算汽车的4个角点
     const cos = Math.cos(car.direction);
     const sin = Math.sin(car.direction);
     
-    // Front-left, front-right, rear-left, rear-right corners
+    // 前左、前右、后左、后右角点
     const corners = [
         { x: car.x + (cos * carHalfLength - sin * carHalfWidth), y: car.y + (sin * carHalfLength + cos * carHalfWidth) },
         { x: car.x + (cos * carHalfLength + sin * carHalfWidth), y: car.y + (sin * carHalfLength - cos * carHalfWidth) },
         { x: car.x - (cos * carHalfLength + sin * carHalfWidth), y: car.y - (sin * carHalfLength - cos * carHalfWidth) },
         { x: car.x - (cos * carHalfLength - sin * carHalfWidth), y: car.y - (sin * carHalfLength + cos * carHalfWidth) },
-        { x: car.x, y: car.y } // center point
+        { x: car.x, y: car.y } // 中心点
     ];
     
-    // Check if any corner is on road (main or branch)
-    const roadMargin = 2; // Small margin to prevent edge flickering
+    // 检查任何角点是否在道路上（主赛道或分支）
+    const roadMargin = 2; // 小边距防止边缘闪烁
     for (let corner of corners) {
-        // Check main road using track distance
+        // 使用赛道距离检查主道路
         let closest = findClosestTrackPoint(corner.x, corner.y);
         let trackDist = Math.abs(getTrackDistance(corner.x, corner.y, closest.index));
         if (trackDist < TRACK_WIDTH / 2 - roadMargin) {
             return true;
         }
         
-        // Check branch road using closest branch point
+        // 使用最近的分支点检查分支道路
         let branchClosest = getClosestBranchPoint(corner.x, corner.y);
         if (branchClosest.dist < BRANCH_WIDTH / 2 - roadMargin) {
             return true;
@@ -2899,11 +2948,11 @@ function isOnTrack(x, y) {
     let closest = findClosestTrackPoint(x, y);
     let trackDist = Math.abs(getTrackDistance(x, y, closest.index));
     if (trackDist < TRACK_WIDTH / 2) return true;
-    // Check branch paths
+    // 检查分支路径
     return isOnBranch(x, y);
 }
 
-// ==================== CAR FACTORY ====================
+// ==================== 汽车工厂 ====================
 function createCar(color, isPlayer) {
     return {
         x: 0, y: 0,
@@ -2945,11 +2994,11 @@ function createCar(color, isPlayer) {
     };
 }
 
-// ==================== PLACE CARS (PLAYER + NPC TRAFFIC) ====================
+// ==================== 放置车辆（玩家 + NPC交通） ====================
 let npcSpawnTimer = 0;
 let npcSpawnStarted = false;
 
-// Initialize NPC pool - create all NPC cars upfront
+// 初始化NPC池 - 预先创建所有NPC车辆
 function initNPCPool() {
     npcPool = [];
     activeNPCs = [];
@@ -2978,7 +3027,7 @@ function placeCars() {
     cars.push(pCar);
     playerPrevX = pCar.x; playerPrevY = pCar.y;
     
-    // Initialize NPC pool
+    // 初始化NPC池
     initNPCPool();
     
     npcSpawnTimer = 0;
@@ -2988,7 +3037,7 @@ function placeCars() {
 function spawnNPCNearPlayer() {
     if (!player) return;
 
-    // Get inactive NPC from pool instead of creating new one
+    // 从池中获取非活动NPC而不是创建新的
     let npc = null;
     for (let i = 0; i < npcPool.length; i++) {
         if (!npcPool[i].active) {
@@ -2996,7 +3045,7 @@ function spawnNPCNearPlayer() {
             break;
         }
     }
-    if (!npc) return; // Pool exhausted
+    if (!npc) return; // 池已耗尽
 
     let forwardDist = randRange(NPC_SPAWN_DISTANCE * 0.5, NPC_SPAWN_DISTANCE);
     let backwardDist = randRange(NPC_SPAWN_DISTANCE * 0.3, NPC_SPAWN_DISTANCE * 0.7);
@@ -3005,13 +3054,13 @@ function spawnNPCNearPlayer() {
     let playerIdx = player.currentPathIdx;
     let spawnIdx;
 
-    // Try multiple positions to find one far enough from other NPCs
-    let minNPCSeparation = 250; // minimum distance between NPCs
+    // 尝试多个位置以找到与其他NPC足够远的位置
+    let minNPCSeparation = 250; // NPC之间的最小距离
     let minSepSq = minNPCSeparation * minNPCSeparation;
     let placed = false;
 
     for (let attempt = 0; attempt < 6; attempt++) {
-        let isBehind = !randBool(0.7); // 30% spawn behind player
+        let isBehind = !randBool(0.7); // 30%概率在玩家后方生成
         if (!isBehind) {
             let idxOffset = Math.floor(forwardDist / 10) + randInt(-20, 20);
             spawnIdx = Math.min(playerIdx + idxOffset, pathLength - 50);
@@ -3021,14 +3070,14 @@ function spawnNPCNearPlayer() {
         }
         spawnIdx = clamp(spawnIdx, 20, pathLength - 50);
 
-        // Avoid spawning near finish line
+        // 避免在终点线附近生成
         if (Math.abs(spawnIdx - (pathLength - 1)) < 100) {
-            continue; // Skip finish line area
+            continue; // 跳过终点线区域
         }
 
         let np = trackPath[spawnIdx];
         
-        // Detect curve intensity by checking direction change over nearby points
+        // 通过检查附近点的方向变化来检测弯道强度
         let curveIntensity = 0;
         let lookAhead = 15;
         let lookBehind = 15;
@@ -3038,11 +3087,11 @@ function spawnNPCNearPlayer() {
             curveIntensity = Math.abs(angleDiff(prevDir, nextDir));
         }
         
-        // Spawn at random position on track
+        // 在赛道上随机位置生成
         let candX = trackPath[spawnIdx].x;
         let candY = trackPath[spawnIdx].y;
 
-        // Check distance to all active NPCs
+        // 检查与所有活动NPC的距离
         let tooClose = false;
         for (let other of activeNPCs) {
             let ddx = candX - other.x;
@@ -3054,9 +3103,9 @@ function spawnNPCNearPlayer() {
         }
 
         if (!tooClose) {
-            // Reject if spawn position is visible on screen (prevents flash-in)
+            // 如果生成位置在屏幕上可见则拒绝（防止闪烁出现）
             if (isInViewBounds(candX, candY, 100)) {
-                // Try further away next attempt
+                // 下次尝试更远的位置
                 forwardDist = randRange(NPC_SPAWN_DISTANCE * 0.8, NPC_SPAWN_DISTANCE * 1.3);
                 backwardDist = randRange(NPC_SPAWN_DISTANCE * 0.6, NPC_SPAWN_DISTANCE * 1.0);
                 continue;
@@ -3069,7 +3118,7 @@ function spawnNPCNearPlayer() {
             npc.direction = np.dir;
             npc.visualAngle = np.dir;
             npc.currentPathIdx = spawnIdx;
-            // Rear-spawned NPCs start at high speed to catch up naturally
+            // 后方生成的NPC以高速开始以自然追赶
             if (isBehind) {
                 npc.speed = npc.maxSpeed * randRange(0.85, 1.0);
             } else {
@@ -3082,11 +3131,11 @@ function spawnNPCNearPlayer() {
             break;
         }
 
-        // Vary distances for next attempt
+        // 为下次尝试变化距离
         forwardDist = randRange(NPC_SPAWN_DISTANCE * 0.4, NPC_SPAWN_DISTANCE * 1.1);
         backwardDist = randRange(NPC_SPAWN_DISTANCE * 0.2, NPC_SPAWN_DISTANCE * 0.8);
     }
-    // If no valid position found after all attempts, skip this spawn cycle
+    // 如果所有尝试后仍未找到有效位置，跳过此生成周期
 }
 
 let npcDensityTimer = 0;
@@ -3094,12 +3143,12 @@ let npcDensityTimer = 0;
 function updateNPCSpawning() {
     if (!player) return;
     
-    // Stop spawning NPCs after player finishes
+    // 玩家完成后停止生成NPC
     if (player.finished) return;
     
-    // If NPCs are disabled, despawn all existing NPCs and don't spawn new ones
+    // 如果NPC被禁用，清除所有现有NPC并不再生成新的
     if (!showNPCs) {
-        // Despawn all active NPCs
+        // 清除所有活动NPC
         for (let i = activeNPCs.length - 1; i >= 0; i--) {
             let car = activeNPCs[i];
             car.active = false;
@@ -3107,7 +3156,7 @@ function updateNPCSpawning() {
             car.finishTime = 0;
         }
         activeNPCs.length = 0;
-        // Update cars array to only contain player
+        // 更新车辆数组仅包含玩家
         cars.length = 1;
         cars[0] = player;
         return;
@@ -3118,7 +3167,7 @@ function updateNPCSpawning() {
         if (npcSpawnTimer < NPC_START_DELAY) return;
         if (player.currentPathIdx < 30) return;
         npcSpawnStarted = true;
-        npcTargetCount = NPC_COUNT_MIN + randInt(0, 1); // start with 2-3
+        npcTargetCount = NPC_COUNT_MIN + randInt(0, 1); // 从2-3开始
         let spawnCount = Math.min(npcTargetCount, npcPool.length);
         for (let i = 0; i < spawnCount; i++) {
             spawnNPCNearPlayer();
@@ -3126,19 +3175,19 @@ function updateNPCSpawning() {
         return;
     }
 
-    // Periodically adjust target NPC count (every ~5 seconds at 60fps)
+    // 定期调整目标NPC数量（60fps下约每5秒）
     npcDensityTimer++;
     if (npcDensityTimer > 300) {
         npcDensityTimer = 0;
-        // Random target within range, biased toward lower end
+        // 范围内的随机目标，偏向较低端
         let r = Math.random();
-        // 60% chance low (2-3), 30% chance mid (3-4), 10% chance high (4-5)
+        // 60%概率低（2-3），30%概率中（3-4），10%概率高（4-5）
         if (r < 0.6) npcTargetCount = NPC_COUNT_MIN + randInt(0, 1);
         else if (r < 0.9) npcTargetCount = NPC_COUNT_MIN + randInt(1, 2);
         else npcTargetCount = NPC_COUNT_MAX;
     }
 
-    // Despawn NPCs that are too far - use swap remove for O(1) removal
+    // 清除距离过远的NPC - 使用交换移除实现O(1)移除
     for (let i = activeNPCs.length - 1; i >= 0; i--) {
         let car = activeNPCs[i];
 
@@ -3148,8 +3197,8 @@ function updateNPCSpawning() {
 
         if (dist > NPC_DESPAWN_DISTANCE) {
             car.active = false;
-            car.finished = false; // Reset finished state when despawned
-            car.finishTime = 0; // Reset finish time
+            car.finished = false; // 清除时重置完成状态
+            car.finishTime = 0; // 重置完成时间
             let lastIdx = activeNPCs.length - 1;
             if (i !== lastIdx) {
                 activeNPCs[i] = activeNPCs[lastIdx];
@@ -3158,12 +3207,12 @@ function updateNPCSpawning() {
         }
     }
 
-    // Spawn new NPCs if below dynamic target
+    // 如果低于动态目标则生成新NPC
     if (activeNPCs.length < npcTargetCount) {
         spawnNPCNearPlayer();
     }
 
-    // Update cars array in place instead of creating new array
+    // 原地更新车辆数组而不是创建新数组
     cars.length = 1;
     cars[0] = player;
     for (let npc of activeNPCs) {
@@ -3171,7 +3220,7 @@ function updateNPCSpawning() {
     }
 }
 
-// ==================== PLAYER UPDATE ====================
+// ==================== 玩家更新 ====================
 function updatePlayer(car, dt) {
     if (car.collisionCooldown > 0) car.collisionCooldown -= dt;
     if (car.collisionPenalty > 0) car.collisionPenalty -= dt;
@@ -3181,28 +3230,28 @@ function updatePlayer(car, dt) {
     let inputLeft = keys['ArrowLeft'] || keys['KeyA'] || touchControls.left;
     let inputRight = keys['ArrowRight'] || keys['KeyD'] || touchControls.right;
 
-    // Post-finish: allow control but gradually reduce speed to a stop
+    // 完成后：允许控制但逐渐减速停止
     let effectiveMaxSpeed = car.maxSpeed;
     let postFinishDeceleration = false;
     if (car.finished) {
         let elapsed = raceTime - car.finishTime;
-        // Immediate strong deceleration after finish
+        // 完成后立即强力减速
         if (elapsed > 0.5) {
             let brakeFactor = clamp((elapsed - 0.5) / 2, 0, 1);
             effectiveMaxSpeed = car.maxSpeed * (1 - brakeFactor * 0.95);
             if (!inputUp) {
-                car.speed *= lerp(0.97, 0.70, brakeFactor); // Stronger deceleration
+                car.speed *= lerp(0.97, 0.70, brakeFactor); // 更强的减速
                 postFinishDeceleration = true;
             }
         }
         if (elapsed > 2.5) {
-            car.speed *= 0.65; // Much faster deceleration
+            car.speed *= 0.65; // 更快的减速
             postFinishDeceleration = true;
             if (Math.abs(car.speed) < 0.05) car.speed = 0;
         }
     }
 
-    // Acceleration with collision penalty: slower recovery after crashes
+    // 碰撞惩罚的加速：碰撞后恢复较慢
     let accelMult = 1;
     if (car.collisionPenalty > 0) {
         accelMult = 0.5 + 0.5 * (1 - clamp(car.collisionPenalty / 1.0, 0, 1));
@@ -3211,10 +3260,10 @@ function updatePlayer(car, dt) {
     if (inputUp) {
         let accelFactor = 1 - (car.speed / effectiveMaxSpeed) * 0.5;
         
-        // Slow down acceleration linearly above 160 speed (corresponds to ~7.11 in game units)
+        // 速度超过160时线性减慢加速（对应游戏单位约7.11）
         let speed160 = 7.11;
         if (car.speed > speed160) {
-            // Calculate linear slowdown factor (from 0.6 to 0.1 as speed approaches max)
+            // 计算线性减速因子（速度接近最大时从0.6到0.1）
             let excessSpeed = car.speed - speed160;
             let maxExcess = car.maxSpeed - speed160;
             let slowdownFactor = 0.6 - (excessSpeed / maxExcess) * 0.5;
@@ -3229,20 +3278,20 @@ function updatePlayer(car, dt) {
     }
     car.speed = clamp(car.speed, -effectiveMaxSpeed * 0.175, effectiveMaxSpeed);
 
-    // Turning: speed-dependent steering with moderate high-speed penalty
+    // 转向：速度相关的转向，高速时有适度的惩罚
     let speedRatio = Math.abs(car.speed) / car.maxSpeed;
-    // Smoother curve: good at mid-speed, stronger reduction at high speed
+    // 更平滑的曲线：中速时良好，高速时更强的减少
     let turnFactor = speedRatio * Math.max(0.2, 1.0 - speedRatio * speedRatio * 0.85);
 
-    // Target steering input: -1 (left), 0 (center), +1 (right)
+    // 目标转向输入：-1（左），0（中），+1（右）
     let targetSteer = 0;
     if (inputLeft) targetSteer = -1;
     if (inputRight) targetSteer = 1;
 
-    // Linear delay: smooth steering ramp
+    // 线性延迟：平滑的转向斜坡
     let steerSmooth = 0.18;
     car.steeringInput += (targetSteer - car.steeringInput) * steerSmooth;
-    // Snap to zero when nearly centered to avoid drift
+    // 接近中心时归零以避免漂移
     if (Math.abs(car.steeringInput) < 0.01 && targetSteer === 0) car.steeringInput = 0;
 
     let turnAmount = car.steeringInput * car.turnRate * turnFactor;
@@ -3250,11 +3299,11 @@ function updatePlayer(car, dt) {
     car.direction += turnAmount;
     car.direction = normalizeAngle(car.direction);
 
-    // Move
+    // 移动
     car.x += Math.cos(car.direction) * car.speed;
     car.y += Math.sin(car.direction) * car.speed;
 
-    // Brake sound when braking at speed
+    // 高速刹车时的刹车声
     if (inputDown && Math.abs(car.speed) > car.maxSpeed * 0.3) {
         let brakeIntensity = Math.abs(car.speed) / car.maxSpeed;
         playBrakeSound(brakeIntensity);
@@ -3262,18 +3311,18 @@ function updatePlayer(car, dt) {
         stopBrakeSound();
     }
 
-    // Visual angle interpolation (smooth)
+    // 视觉角度插值（平滑）
     let angleDelta = angleDiff(car.visualAngle, car.direction);
     car.visualAngle += angleDelta * 0.2;
 
-    // Update engine sound
+    // 更新引擎声音
     updateEngineSound(car.speed, car.maxSpeed);
 
-    // Track index - compute once and reuse
+    // 赛道索引 - 计算一次并重用
     let closest = findClosestTrackPoint(car.x, car.y);
     car.currentPathIdx = closest.index;
 
-    // Off-track friction + dust - check if car is on road surface
+    // 离开赛道的摩擦 + 灰尘 - 检查汽车是否在道路表面上
     let onTrack = isCarOnRoadSurface(car);
     
     if (!onTrack) {
@@ -3283,7 +3332,7 @@ function updatePlayer(car, dt) {
         }
     }
 
-    // Track distance traveled (stop counting after finish)
+    // 记录行驶距离（完成后停止计数）
     let ddx = car.x - playerPrevX, ddy = car.y - playerPrevY;
     if (!car.finished) {
         totalDistance += Math.sqrt(ddx * ddx + ddy * ddy);
@@ -3291,7 +3340,7 @@ function updatePlayer(car, dt) {
     playerPrevX = car.x; playerPrevY = car.y;
 }
 
-// ==================== NPC UPDATE ====================
+// ==================== NPC更新 ====================
 const NPC_ACTIVE_DISTANCE = 500;
 const NPC_SIMPLE_DISTANCE = 800;
 
@@ -3334,13 +3383,12 @@ function updateNPC(car, dt, isPlayerNearby) {
     }
     
     if (!isPlayerNearby) {
-        let closest = findClosestTrackPoint(car.x, car.y);
-        car.currentPathIdx = closest.index;
+        updateClosestPath(car);
         
-        let trackDir = trackPath[closest.index].dir;
+        let trackDir = trackPath[car.currentPathIdx].dir;
         let steerAngle = angleDiff(car.direction, trackDir);
         
-        let lateralDist = getTrackDistance(car.x, car.y, closest.index);
+        let lateralDist = getTrackDistance(car.x, car.y, car.currentPathIdx);
         let absLateralDist = Math.abs(lateralDist);
         let lateralCorrection = 0;
         if (absLateralDist > TRACK_WIDTH * 0.35) {
@@ -3441,12 +3489,17 @@ function updateNPC(car, dt, isPlayerNearby) {
         car.targetY += p.ny * pushDir * pushAmount;
     }
 
+    // 当远离赛道时渐进重置而不是瞬间传送
     if (absTrackDist > TRACK_WIDTH * 2) {
         let p = trackPath[closestIdx];
         let offset = (Math.random() - 0.5) * TRACK_WIDTH * 0.4;
-        car.targetX = p.x - Math.sin(p.dir) * offset;
-        car.targetY = p.y + Math.cos(p.dir) * offset;
-        car.direction = p.dir;
+        let resetX = p.x - Math.sin(p.dir) * offset;
+        let resetY = p.y + Math.cos(p.dir) * offset;
+        // 平滑插值到重置位置
+        car.targetX += (resetX - car.targetX) * 0.3;
+        car.targetY += (resetY - car.targetY) * 0.3;
+        car.direction += angleDiff(car.direction, p.dir) * 0.3;
+        car.direction = normalizeAngle(car.direction);
         car.speed = car.maxSpeed * 0.5;
     }
 
@@ -3459,9 +3512,9 @@ function updateNPC(car, dt, isPlayerNearby) {
 
 
 
-// ==================== TRACK BOUNDARY (SOFT PUSH-BACK) ====================
+// ==================== 赛道边界（软推回） ====================
 function isOnBranch(x, y) {
-    // Check cache first
+    // 首先检查缓存
     let cdx = x - branchCache.x, cdy = y - branchCache.y;
     if (cdx * cdx + cdy * cdy < 2500 && branchCache.age < BRANCH_CACHE_MAX_AGE) {
         branchCache.age++;
@@ -3498,7 +3551,7 @@ function isOnBranch(x, y) {
     return false;
 }
 
-// Pre-allocated result for getClosestBranchPoint
+// getClosestBranchPoint的预分配结果
 let closestBranchResult = { point: null, path: null, dist: Infinity, px: 0, py: 0, pnx: 0, pny: 0, pindex: 0 };
 
 function getClosestBranchPoint(x, y) {
@@ -3545,54 +3598,48 @@ function getClosestBranchPoint(x, y) {
 function enforceTrackBoundary(car) {
     if (car.isPlayer) return;
 
-    // Branch boundary constraint removed - only main track constraint
-    /*
-    if (isOnBranch(car.x, car.y)) {
-        let branchInfo = getClosestBranchPoint(car.x, car.y);
-        if (branchInfo.point) {
-            let dx = car.x - branchInfo.px;
-            let dy = car.y - branchInfo.py;
-            let lateralDist = dx * branchInfo.pnx + dy * branchInfo.pny;
-            let absDist = Math.abs(lateralDist);
-            let halfW = BRANCH_WIDTH / 2;
-            
-            if (absDist > halfW + 20) {
-                let pushDir = lateralDist > 0 ? -1 : 1;
-                let pushAmount = Math.min((absDist - halfW) * 0.08, 4);
-                car.targetX += branchInfo.pnx * pushDir * pushAmount;
-                car.targetY += branchInfo.pny * pushDir * pushAmount;
-                car.speed *= 0.98;
-            }
+    // 在当前路径索引周围使用局部搜索以避免缓存冲突
+    let bestIdx = car.currentPathIdx;
+    let bestDist = Infinity;
+    for (let i = -5; i <= 5; i++) {
+        let idx = clamp(car.currentPathIdx + i, 0, trackPath.length - 1);
+        let dx = car.targetX - trackPath[idx].x;
+        let dy = car.targetY - trackPath[idx].y;
+        let d = dx * dx + dy * dy;
+        if (d < bestDist) {
+            bestDist = d;
+            bestIdx = idx;
         }
-        return;
     }
-    */
-
-    let closest = findClosestTrackPoint(car.targetX, car.targetY);
-    let trackDist = getTrackDistance(car.targetX, car.targetY, closest.index);
+    car.currentPathIdx = bestIdx;
+    
+    let trackDist = getTrackDistance(car.targetX, car.targetY, bestIdx);
     let absDist = Math.abs(trackDist);
     let halfW = TRACK_WIDTH / 2;
 
-    // NPC: push back onto main track if off-road
+    // NPC：如果离开道路则推回主赛道
     if (absDist > halfW + 30) {
-        let p = trackPath[closest.index];
+        let p = trackPath[bestIdx];
         let pushDir = trackDist > 0 ? -1 : 1;
         let pushAmount = Math.min((absDist - halfW) * 0.08, 5);
         car.targetX += p.nx * pushDir * pushAmount;
         car.targetY += p.ny * pushDir * pushAmount;
         car.speed *= 0.97;
     }
-    // Hard cap for NPCs only: if very far off track, set target position
-    if (closest.dist > TRACK_WIDTH * 3) {
-        let p = trackPath[closest.index];
-        car.targetX = p.x;
-        car.targetY = p.y;
-        car.direction = p.dir;
+    // 仅NPC的硬性限制：如果离赛道非常远，平滑重置位置
+    let distToTrack = Math.sqrt(bestDist);
+    if (distToTrack > TRACK_WIDTH * 3) {
+        let p = trackPath[bestIdx];
+        // 平滑插值而不是瞬间传送
+        car.targetX += (p.x - car.targetX) * 0.4;
+        car.targetY += (p.y - car.targetY) * 0.4;
+        car.direction += angleDiff(car.direction, p.dir) * 0.4;
+        car.direction = normalizeAngle(car.direction);
         car.speed *= 0.3;
     }
 }
 
-// ==================== CAR-TO-CAR COLLISION (SMOOTH BOUNCE) ====================
+// ==================== 车对车碰撞（平滑弹跳） ====================
 function resolveCarCollisions() {
     for (let i = 0; i < cars.length; i++) {
         for (let j = i + 1; j < cars.length; j++) {
@@ -3603,28 +3650,28 @@ function resolveCarCollisions() {
             let minDist = (CAR_WIDTH + CAR_LENGTH) / 2 * 0.7;
 
             if (d < minDist && d > 0.01) {
-                // Collision normal
+                // 碰撞法线
                 let nx = dx / d;
                 let ny = dy / d;
 
-                // Calculate collision direction relative to car A
+                // 计算相对于车辆A的碰撞方向
                 let aCos = Math.cos(a.direction);
                 let aSin = Math.sin(a.direction);
-                // Forward component: positive = front collision, negative = rear collision
+                // 前向分量：正数 = 前方碰撞，负数 = 后方碰撞
                 let forwardDot = nx * aCos + ny * aSin;
-                // Side component: absolute value indicates side collision
+                // 侧向分量：绝对值表示侧面碰撞
                 let sideDot = Math.abs(-nx * aSin + ny * aCos);
 
-                // Determine if this is a side collision (side component > forward component)
+                // 判断是否为侧面碰撞（侧向分量 > 前向分量）
                 let isSideCollision = sideDot > Math.abs(forwardDot);
 
-                // Side collision has 1/4 the push effect of front/rear collision
+                // 侧面碰撞的推力效果是前/后方碰撞的1/4
                 let overlap = minDist - d;
                 
-                // Position push strength (separation distance)
+                // 位置推力强度（分离距离）
                 let posPushStrength = Math.max(overlap * 0.6, 2);
                 if (isSideCollision) {
-                    posPushStrength *= 0.25; // Reduce side position push to 1/4
+                    posPushStrength *= 0.25; // 将侧面位置推力减少到1/4
                 }
                 
                 if (a.isNPC) {
@@ -3642,7 +3689,7 @@ function resolveCarCollisions() {
                     b.y += ny * posPushStrength;
                 }
 
-                // Velocity components along normal
+                // 沿法线的速度分量
                 let avx = Math.cos(a.direction) * a.speed;
                 let avy = Math.sin(a.direction) * a.speed;
                 let bvx = Math.cos(b.direction) * b.speed;
@@ -3651,14 +3698,14 @@ function resolveCarCollisions() {
                 let aDotN = avx * nx + avy * ny;
                 let bDotN = bvx * nx + bvy * ny;
 
-                // Always resolve to unstick
+                // 始终解决以脱离粘连
                 let relVel = aDotN - bDotN;
                 if (relVel > -0.5) {
                     let restitution = 0.6;
                     let impulse = (1 + restitution) * Math.max(relVel, 0.5) / 2;
                     impulse = clamp(impulse, 1.0, 4.0);
                     
-                    // Reduce velocity impulse for side collisions
+                    // 减少侧面碰撞的速度冲量
                     if (isSideCollision) {
                         impulse *= 0.25;
                     }
@@ -3693,7 +3740,7 @@ function resolveCarCollisions() {
                     b.speed = clamp(b.speed, -b.maxSpeed, b.maxSpeed);
 
                     if (a.collisionCooldown <= 0 && b.collisionCooldown <= 0) {
-                        // Only play collision sound if near player (performance + immersion)
+                        // 仅在玩家附近播放碰撞声音（性能 + 沉浸感）
                         let playSound = false;
                         if (player) {
                             let collisionDist = player ? Math.sqrt((a.x - player.x) ** 2 + (a.y - player.y) ** 2) : 0;
@@ -3709,7 +3756,7 @@ function resolveCarCollisions() {
                         b.collisionCooldown = 0.1;
                     }
 
-                    // Fewer sparks with limit check - use counter instead of filter
+                    // 更少的火花带限制检查 - 使用计数器而不是过滤器
                     let cx = (a.x + b.x) / 2;
                     let cy = (a.y + b.y) / 2;
                     let maxSparks = Math.min(4, MAX_SPARKS - particleCounts.spark);
@@ -3722,23 +3769,23 @@ function resolveCarCollisions() {
     }
 }
 
-// ==================== SCENERY COLLISION ====================
+// ==================== 场景碰撞 ====================
 function checkSceneryCollision(car) {
-    // Skip scenery collision if car is on a branch road
+    // 如果车辆在分支道路上则跳过场景碰撞
     if (isOnBranch(car.x, car.y)) return;
 
     let nearby = getSceneryNear(car.x, car.y, 80);
     for (let i = 0; i < nearby.length; i++) {
         let item = nearby[i];
 
-        // Use fixed minimum collision radius for all trees (size 20 * 0.45 = 9)
+        // 对所有树木使用固定的最小碰撞半径（大小20 * 0.45 = 9）
         let itemRadius = item.type === 'tree' ? 20 * 0.45 : 12;
 
         let collided = false;
         let collisionX = item.x;
         let collisionY = item.y;
 
-        // Player uses two-circle (capsule) collision for better rectangular approximation
+        // 玩家使用双圆（胶囊）碰撞以获得更好的矩形近似
         if (car.isPlayer) {
             let result = checkTwoCircleCollision(car, item.x, item.y, itemRadius);
             collided = result.collided;
@@ -3747,7 +3794,7 @@ function checkSceneryCollision(car) {
                 collisionY = result.closestY;
             }
         } else {
-            // NPC uses simple circular collision
+            // NPC使用简单的圆形碰撞
             let dx = car.x - item.x;
             let dy = car.y - item.y;
             let checkRadius = itemRadius + 10;
@@ -3761,28 +3808,28 @@ function checkSceneryCollision(car) {
         }
 
         if (collided) {
-            // Calculate push direction from collision point
+            // 从碰撞点计算推动方向
             let dx = car.x - collisionX;
             let dy = car.y - collisionY;
             let dist = Math.sqrt(dx * dx + dy * dy);
             let nx = dist > 0.01 ? dx / dist : 0;
             let ny = dist > 0.01 ? dy / dist : -1;
             
-            // Push car away from collision point
+            // 将车辆推离碰撞点
             let pushStrength = Math.min(itemRadius * 0.4, 3);
             car.x += nx * pushStrength;
             car.y += ny * pushStrength;
             
-            // Only apply blocking effect - no bounce, just slow down
+            // 仅应用阻挡效果 - 无弹跳，只是减速
             car.speed *= 0.5;
             car.collisionPenalty = 0.5;
             
-            // Only play sound and particles once per collision (using collisionCooldown)
+            // 每次碰撞仅播放一次声音和粒子（使用collisionCooldown）
             if (car.isPlayer && car.collisionCooldown <= 0) {
                 playWallSound();
                 car.collisionCooldown = 0.1;
                 
-                // Spawn particles only once per collision
+                // 每次碰撞仅生成一次粒子
                 let maxScenerySparks = Math.min(2, MAX_SPARKS - particleCounts.spark);
                 for (let s = 0; s < maxScenerySparks; s++) {
                     spawnSpark(car.x - nx * 10, car.y - ny * 10);
@@ -3792,39 +3839,39 @@ function checkSceneryCollision(car) {
     }
 }
 
-// Two-circle (capsule) collision for player car - simpler than rectangle but better shape approximation
+// 玩家车辆的双圆（胶囊）碰撞 - 比矩形简单但形状近似更好
 function checkTwoCircleCollision(car, cx, cy, itemRadius) {
     let cos = Math.cos(car.direction);
     let sin = Math.sin(car.direction);
     
-    // Position of front and back circles (at car nose and tail)
+    // 前后圆的位置（在车头和车尾）
     let frontOffset = CAR_LENGTH * 0.2;
     let backOffset = -CAR_LENGTH * 0.2;
     let circleRadius = CAR_WIDTH * 0.4;
     
-    // Front circle center
+    // 前圆中心
     let frontX = car.x + frontOffset * cos;
     let frontY = car.y + frontOffset * sin;
     
-    // Back circle center
+    // 后圆中心
     let backX = car.x + backOffset * cos;
     let backY = car.y + backOffset * sin;
     
-    // Check collision with front circle
+    // 检查与前圆的碰撞
     let dx1 = cx - frontX;
     let dy1 = cy - frontY;
     let dist1Sq = dx1 * dx1 + dy1 * dy1;
     let combinedRadius1 = circleRadius + itemRadius;
     
-    // Check collision with back circle
+    // 检查与后圆的碰撞
     let dx2 = cx - backX;
     let dy2 = cy - backY;
     let dist2Sq = dx2 * dx2 + dy2 * dy2;
     let combinedRadius2 = circleRadius + itemRadius;
     
-    // Use whichever circle is closer
+    // 使用更近的圆
     if (dist1Sq < combinedRadius1 * combinedRadius1) {
-        // Collision with front circle - find closest point on circle
+        // 与前圆碰撞 - 找到圆上最近的点
         let dist1 = Math.sqrt(dist1Sq);
         let closestX = frontX + (dx1 / dist1) * circleRadius;
         let closestY = frontY + (dy1 / dist1) * circleRadius;
@@ -3832,7 +3879,7 @@ function checkTwoCircleCollision(car, cx, cy, itemRadius) {
     }
     
     if (dist2Sq < combinedRadius2 * combinedRadius2) {
-        // Collision with back circle - find closest point on circle
+        // 与后圆碰撞 - 找到圆上最近的点
         let dist2 = Math.sqrt(dist2Sq);
         let closestX = backX + (dx2 / dist2) * circleRadius;
         let closestY = backY + (dy2 / dist2) * circleRadius;
@@ -3842,7 +3889,7 @@ function checkTwoCircleCollision(car, cx, cy, itemRadius) {
     return { collided: false, closestX: cx, closestY: cy };
 }
 
-// Check collision between two cars using two-circle (capsule) for each
+// 使用双圆（胶囊）检查两车之间的碰撞
 function checkCarToCarCollision(carA, carB) {
     let cosA = Math.cos(carA.direction);
     let sinA = Math.sin(carA.direction);
@@ -3853,13 +3900,13 @@ function checkCarToCarCollision(carA, carB) {
     let backOffset = -CAR_LENGTH * 0.2;
     let circleRadius = CAR_WIDTH * 0.4;
     
-    // Get circles for car A
+    // 获取车辆A的圆
     let aFrontX = carA.x + frontOffset * cosA;
     let aFrontY = carA.y + frontOffset * sinA;
     let aBackX = carA.x + backOffset * cosA;
     let aBackY = carA.y + backOffset * sinA;
     
-    // Get circles for car B
+    // 获取车辆B的圆
     let bFrontX = carB.x + frontOffset * cosB;
     let bFrontY = carB.y + frontOffset * sinB;
     let bBackX = carB.x + backOffset * cosB;
@@ -3868,7 +3915,7 @@ function checkCarToCarCollision(carA, carB) {
     let minDistSq = (circleRadius * 2) * (circleRadius * 2);
     let collisionInfo = null;
     
-    // Check all 4 combinations: A.front vs B.front, A.front vs B.back, A.back vs B.front, A.back vs B.back
+    // 检查所有4种组合：A前vs B前，A前vs B后，A后vs B前，A后vs B后
     let pairs = [
         [aFrontX, aFrontY, bFrontX, bFrontY],
         [aFrontX, aFrontY, bBackX, bBackY],
@@ -3884,7 +3931,7 @@ function checkCarToCarCollision(carA, carB) {
         if (distSq < minDistSq && distSq > 0.01) {
             minDistSq = distSq;
             let d = Math.sqrt(distSq);
-            // Closest point on A's circle
+            // A圆上最近的点
             let closestX = pair[0] - (dx / d) * circleRadius;
             let closestY = pair[1] - (dy / d) * circleRadius;
             collisionInfo = {
@@ -3903,7 +3950,7 @@ function checkCarToCarCollision(carA, carB) {
     return collisionInfo;
 }
 
-// ==================== FINISH LINE COLLISION (PHYSICAL) ====================
+// ==================== 终点线碰撞（物理） ====================
 let finishSoundsStopped = false;
 let finishResultsShown = false;
 
@@ -3911,13 +3958,13 @@ function checkFinishLine() {
     let lastIdx = trackPath.length - 1;
     let fp = trackPath[lastIdx];
     let halfW = TRACK_WIDTH / 2;
-    // Finish line segment endpoints
+    // 终点线段端点
     let flx1 = fp.x + fp.nx * halfW, fly1 = fp.y + fp.ny * halfW;
     let flx2 = fp.x - fp.nx * halfW, fly2 = fp.y - fp.ny * halfW;
     
-    // Check player
+    // 检查玩家
     if (player && !player.finished && !finishLineCrossed) {
-        // Car front point
+        // 车头点
         let carFrontX = player.x + Math.cos(player.direction) * CAR_LENGTH * 0.4;
         let carFrontY = player.y + Math.sin(player.direction) * CAR_LENGTH * 0.4;
         if (segmentIntersect(playerPrevX, playerPrevY, carFrontX, carFrontY, flx1, fly1, flx2, fly2)) {
@@ -3933,12 +3980,12 @@ function checkFinishLine() {
         }
     }
     
-    // Check NPCs
+    // 检查NPC
     for (let npc of activeNPCs) {
         if (!npc.finished) {
             let carFrontX = npc.x + Math.cos(npc.direction) * CAR_LENGTH * 0.4;
             let carFrontY = npc.y + Math.sin(npc.direction) * CAR_LENGTH * 0.4;
-            // Store previous position for intersection check
+            // 存储前一个位置用于相交检查
             let npcPrevX = npc.x - Math.cos(npc.direction) * npc.speed;
             let npcPrevY = npc.y - Math.sin(npc.direction) * npc.speed;
             if (segmentIntersect(npcPrevX, npcPrevY, carFrontX, carFrontY, flx1, fly1, flx2, fly2)) {
@@ -3951,7 +3998,7 @@ function checkFinishLine() {
     }
 }
 
-// Called each frame during racing to handle post-finish transitions
+// 每帧在比赛中调用以处理完成后过渡
 function updateFinishState() {
     if (!player || !player.finished) return;
     let elapsed = raceTime - player.finishTime;
@@ -3959,26 +4006,26 @@ function updateFinishState() {
         finishSoundsStopped = true;
         stopGameSounds();
     }
-    // Show results overlay at 1s but keep racing state for coasting
+    // 在1秒时显示结果覆盖层但保持比赛状态以滑行
     if (!finishResultsShown && elapsed > 1) {
         finishResultsShown = true;
     }
 }
 
-// ==================== RANKINGS (not used for results, kept for minimap) ====================
+// ==================== 排名（不用于结果，保留用于小地图） ====================
 function getRankings() {
     return [player];
 }
 
-// ==================== PARTICLES ====================
-// Particle pool system with free list for O(1) allocation
-// Active set tracks which indices are active to avoid scanning all 800 slots
+// ==================== 粒子 ====================
+// 带空闲列表的粒子池系统，实现O(1)分配
+// 活动集合跟踪哪些索引是活动的，避免扫描所有800个槽位
 const MAX_PARTICLES = 800;
 const MAX_SPARKS = 300;
 const MAX_DUST = 200;
 let particlePool = [];
-let particleFreeList = []; // indices of free particles
-let activeParticleSet = []; // indices of active particles
+let particleFreeList = []; // 空闲粒子的索引
+let activeParticleSet = []; // 活动粒子的索引
 let particleCounts = { spark: 0, dust: 0, total: 0 };
 
 function initParticlePool() {
@@ -4070,7 +4117,7 @@ function updateParticles() {
 
         if (p.life <= 0) {
             p.active = false;
-            particleFreeList.push(i); // Return to free list
+            particleFreeList.push(i); // 返回空闲列表
         } else {
             newActive.push(i);
             if (p.type === 'spark') particleCounts.spark++;
@@ -4081,7 +4128,7 @@ function updateParticles() {
     particleCounts.total = newActive.length;
 }
 
-// Menu particles
+// 菜单粒子
 function initMenuParticles() {
     menuParticles = [];
     for (let i = 0; i < 60; i++) {
@@ -4110,24 +4157,39 @@ function updateMenuParticles() {
 }
 
 // ==================== CAMERA ====================
+// 镜头旋转相关参数
+const CAMERA_ROTATION_SENSITIVITY = 0.1;  // 镜头旋转灵敏度
+const CAMERA_ROTATION_MAX_ANGLE = 0.075;    // 最大旋转角度
+const CAMERA_ROTATION_RETURN_SPEED = 0.1; // 镜头回正速度
+
 function updateCamera() {
     if (!player) return;
 
-    let targetAngle = -player.direction + Math.PI * 1.5;
+    // 基础角度：跟随玩家车辆方向
+    let baseAngle = -player.direction + Math.PI * 1.5;
+    
+    // 根据左右键输入计算目标旋转角度
+    let inputLeft = keys['ArrowLeft'] || keys['KeyA'] || touchControls.left;
+    let inputRight = keys['ArrowRight'] || keys['KeyD'] || touchControls.right;
+    let targetRotationOffset = 0;
+    if (inputLeft) targetRotationOffset = -CAMERA_ROTATION_MAX_ANGLE;
+    if (inputRight) targetRotationOffset = CAMERA_ROTATION_MAX_ANGLE;
+    
+    // 平滑过渡到目标旋转角度
+    camera.rotationOffset += (targetRotationOffset - camera.rotationOffset) * CAMERA_ROTATION_RETURN_SPEED;
+    
+    // 最终相机角度 = 基础角度 + 旋转偏移
+    let targetAngle = baseAngle + camera.rotationOffset;
 
     let angleDelta = angleDiff(camera.angle, targetAngle);
-    camera.angle += angleDelta * 0.12;
+    camera.angle += angleDelta * CAMERA_ROTATION_SENSITIVITY;
 
-    // Precompute trig values for worldToScreen
+    // 为worldToScreen预计算三角函数值
     cameraTransform.cos = Math.cos(camera.angle);
     cameraTransform.sin = Math.sin(camera.angle);
 
-    let inputLeft = keys['ArrowLeft'] || keys['KeyA'] || touchControls.left;
-    let inputRight = keys['ArrowRight'] || keys['KeyD'] || touchControls.right;
-    let targetSway = 0;
-    if (inputLeft) targetSway = 35;
-    if (inputRight) targetSway = -35;
-    camera.swayOffset += (targetSway - camera.swayOffset) * 0.06;
+    // 清除旧的swayOffset（不再使用水平偏移）
+    camera.swayOffset = 0;
     
     // 弹性镜头效果：根据转向和速度计算离心力
     let lateralAcceleration = player.steeringInput * player.speed * player.speed * CAMERA_SWAY_SENSITIVITY;
@@ -4145,35 +4207,35 @@ function updateCamera() {
     camera.viewBounds.minY = camera.y - halfH;
     camera.viewBounds.maxY = camera.y + halfH;
 
-    // Compute visible track index range based on player position
+    // 根据玩家位置计算可见赛道索引范围
     if (player && trackPath.length > 0) {
         let playerIdx = player.currentPathIdx;
         let viewRadius = Math.max(W, H) + VIEW_MARGIN * 2;
-        // Estimate how many track points fit in the view (~1 point per 10-30 world units)
+        // 估算视野内能容纳多少赛道点（约每10-30世界单位1个点）
         let idxRange = Math.ceil(viewRadius / 8) + VISIBLE_RANGE_PADDING;
         visibleTrackRange.start = Math.max(0, playerIdx - idxRange);
         visibleTrackRange.end = Math.min(trackPath.length - 1, playerIdx + idxRange);
         
-        // Find additional visible segments due to track folding back
-        // Check segments outside the normal range that might be visible
+        // 查找因赛道折叠而额外可见的段落
+        // 检查正常范围外可能可见的段落
         additionalVisibleSegments = [];
-        let checkStep = 20; // Check every 20 points for efficiency
+        let checkStep = 20; // 每20个点检查一次以提高效率
         let viewBounds = camera.viewBounds;
         let expandedMargin = VIEW_MARGIN + 100;
         
-        // Check segments before visible range
+        // 检查可见范围之前的段落
         for (let i = 0; i < visibleTrackRange.start; i += checkStep) {
             let p = trackPath[i];
             if (p.x >= viewBounds.minX - expandedMargin && p.x <= viewBounds.maxX + expandedMargin &&
                 p.y >= viewBounds.minY - expandedMargin && p.y <= viewBounds.maxY + expandedMargin) {
-                // Found a visible segment, expand to include surrounding points
+                // 找到可见段落，扩展以包含周围的点
                 let segStart = Math.max(0, i - checkStep);
                 let segEnd = Math.min(visibleTrackRange.start - 1, i + checkStep);
                 additionalVisibleSegments.push({ start: segStart, end: segEnd });
             }
         }
         
-        // Check segments after visible range
+        // 检查可见范围之后的段落
         for (let i = visibleTrackRange.end + checkStep; i < trackPath.length; i += checkStep) {
             let p = trackPath[i];
             if (p.x >= viewBounds.minX - expandedMargin && p.x <= viewBounds.maxX + expandedMargin &&
@@ -4186,7 +4248,7 @@ function updateCamera() {
     }
 }
 
-// Optimized worldToScreen - writes to provided object to avoid allocation
+// 优化的worldToScreen - 写入提供的对象以避免分配
 function worldToScreenFast(wx, wy, out) {
     let dx = wx - camera.x;
     let dy = wy - camera.y;
@@ -4195,7 +4257,7 @@ function worldToScreenFast(wx, wy, out) {
     return out;
 }
 
-// Reusable screen point objects to avoid allocation
+// 可重用的屏幕点对象以避免分配
 const screenPointCache = { x: 0, y: 0 };
 const screenPointCache2 = { x: 0, y: 0 };
 
@@ -4209,7 +4271,7 @@ function isInViewBounds(x, y, margin) {
            y >= camera.viewBounds.minY - margin && y <= camera.viewBounds.maxY + margin;
 }
 
-// Pre-allocated corners array for drawStartFinishLine
+// drawStartFinishLine的预分配角点数组
 let startLineCorners = [
     { x: 0, y: 0 }, { x: 0, y: 0 }, { x: 0, y: 0 }, { x: 0, y: 0 }
 ];
@@ -4217,15 +4279,15 @@ let startLineCorners = [
 function drawStartFinishLine(pathIdx) {
     if (pathIdx < 0 || pathIdx >= trackPath.length) return;
     
-    // Get the point
+    // 获取点
     let p = trackPath[pathIdx];
     
-    // Use the point's normal for perpendicular direction (across the road)
-    // This ensures both start and finish lines align with road edges
+    // 使用点的法线作为垂直方向（横跨道路）
+    // 这确保起点和终点线与道路边缘对齐
     let perpX = p.nx;
     let perpY = p.ny;
     
-    // Direction along the road (tangent)
+    // 沿道路的方向（切线）
     let dirX = -p.ny;
     let dirY = p.nx;
     
@@ -4244,14 +4306,14 @@ function drawStartFinishLine(pathIdx) {
             let lateral = frac * TRACK_WIDTH;
             let forward = (row - 0.5) * lineDepth;
 
-            // Calculate world position
+            // 计算世界坐标位置
             let wx = p.x + perpX * lateral + dirX * forward;
             let wy = p.y + perpY * lateral + dirY * forward;
 
             let hw = checkSize * 0.5;
             let hd = lineDepth * 0.5;
             
-            // Calculate corners in world space
+            // 在世界空间计算角点
             let cx0 = wx - perpX * hw - dirX * hd;
             let cy0 = wy - perpY * hw - dirY * hd;
             let cx1 = wx + perpX * hw - dirX * hd;
@@ -4261,7 +4323,7 @@ function drawStartFinishLine(pathIdx) {
             let cx3 = wx - perpX * hw + dirX * hd;
             let cy3 = wy - perpY * hw + dirY * hd;
             
-            // Transform to screen space
+            // 转换到屏幕空间
             let dx0 = cx0 - camX, dy0 = cy0 - camY;
             let dx1 = cx1 - camX, dy1 = cy1 - camY;
             let dx2 = cx2 - camX, dy2 = cy2 - camY;
@@ -4295,7 +4357,7 @@ function drawStartFinishLine(pathIdx) {
 }
 
 function drawCar(car) {
-    // Inline screen transform
+    // 内联屏幕转换
     let dx = car.x - camera.x;
     let dy = car.y - camera.y;
     let sx = W / 2 + (dx * cameraTransform.cos - dy * cameraTransform.sin) * VIEW_SCALE + camera.swayOffset;
@@ -4311,40 +4373,55 @@ function drawCar(car) {
     ctx.translate(sx, sy);
     ctx.rotate(angle);
 
-    // Shadow
+    // Shadow - 根据光线照射角度连续计算阴影位置
+    const SUN_ANGLE = Math.PI / 4; // 阳光从世界坐标系的45度方向照射
+    const SHADOW_DISTANCE = 6; // 阴影距离
+    
+    // 计算车身相对于阳光的角度
+    let angleDiff = car.visualAngle - SUN_ANGLE;
+    
+    // 归一化到 -PI 到 PI
+    while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
+    while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
+    
+    // 连续计算阴影偏移 - 阴影始终出现在背光侧
+    // 当车身旋转时，阴影平滑地绕车身移动
+    let shadowOffsetX = Math.sin(angleDiff) * SHADOW_DISTANCE;
+    let shadowOffsetY = Math.cos(angleDiff) * SHADOW_DISTANCE;
+    
     ctx.fillStyle = COLORS.shadow;
     ctx.beginPath();
-    roundRect(ctx, -w/2 + 3, -h/2 + 3, w, h, 4);
+    roundRect(ctx, -w/2 + shadowOffsetX, -h/2 + shadowOffsetY, w, h, 4);
     ctx.fill();
 
-    // Body
+    // 车身
     ctx.fillStyle = car.color;
     ctx.beginPath();
     roundRect(ctx, -w/2, -h/2, w, h, 4);
     ctx.fill();
 
-    // Body highlight
+    // 车身高光
     ctx.fillStyle = 'rgba(255,255,255,0.15)';
     ctx.fillRect(-w/2 + 2, -h/2 + 2, w - 4, h * 0.35);
 
-    // Windshield (front)
+    // 挡风玻璃（前）
     ctx.fillStyle = COLORS.windshield;
     ctx.beginPath();
     roundRect(ctx, -w/2 + 3, -h/2 + h * 0.35, w - 6, h * 0.2, 2);
     ctx.fill();
 
-    // Rear window
+    // 后窗
     ctx.fillStyle = COLORS.rearWindow;
     ctx.beginPath();
     roundRect(ctx, -w/2 + 4, h/2 - h * 0.22, w - 8, h * 0.1, 2);
     ctx.fill();
 
-    // Headlights
+    // 前灯
     ctx.fillStyle = COLORS.headlight;
     ctx.fillRect(-w/2 + 2, -h/2, 5, 3);
     ctx.fillRect(w/2 - 7, -h/2, 5, 3);
 
-    // Taillights
+    // 尾灯
     ctx.fillStyle = COLORS.taillight;
     ctx.fillRect(-w/2 + 2, h/2 - 3, 5, 3);
     ctx.fillRect(w/2 - 7, h/2 - 3, 5, 3);
@@ -4390,11 +4467,11 @@ function drawParticles() {
     ctx.globalAlpha = 1;
 }
 
-// ==================== UI (CHINESE) ====================
+// ==================== UI（中文） ====================
 function drawHUD() {
     ctx.save();
 
-    // --- Circular speed gauge ---
+    // --- 圆形速度表 ---
     let maxDisplay = 220;
     let speedVal = Math.abs(Math.round(player.speed / player.maxSpeed * maxDisplay));
     let speedPct = clamp(speedVal / maxDisplay, 0, 1);
@@ -4405,24 +4482,24 @@ function drawHUD() {
     let arcEnd = Math.PI * 2.25;
     let arcRange = arcEnd - arcStart;
 
-    // Track ring background
+    // 赛道环背景
     ctx.lineWidth = 5;
     ctx.strokeStyle = 'rgba(255,255,255,0.1)';
     ctx.beginPath();
     ctx.arc(gaugeCX, gaugeCY, gaugeR, arcStart, arcEnd);
     ctx.stroke();
 
-    // Filled arc
+    // 填充弧形
     let fillEnd = arcStart + arcRange * speedPct;
     
-    // Gradient color from green to red based on speed percentage
+    // 根据速度百分比从绿色渐变到红色
     let arcColor;
     if (speedPct < 0.5) {
-        // Green to yellow gradient
+        // 绿色到黄色渐变
         let t = speedPct * 2;
         arcColor = `rgb(${Math.floor(255 * (1 - t))}, ${255}, 0)`;
     } else {
-        // Yellow to red gradient
+        // 黄色到红色渐变
         let t = (speedPct - 0.5) * 2;
         arcColor = `rgb(255, ${Math.floor(255 * (1 - t))}, 0)`;
     }
@@ -4434,7 +4511,7 @@ function drawHUD() {
     ctx.stroke();
     ctx.lineCap = 'butt';
 
-    // Speed text centered
+    // 速度文本居中
     ctx.fillStyle = '#ffffff';
     ctx.font = 'bold 18px sans-serif';
     ctx.textAlign = 'center';
@@ -4445,19 +4522,19 @@ function drawHUD() {
     ctx.fillText('km/h', gaugeCX, gaugeCY + 13);
     ctx.textBaseline = 'alphabetic';
 
-    // --- Home button at bottom right ---
+    // --- 右下角主页按钮 ---
     let btnR = 22;
     let btnX = W - 40;
     let btnY = H - 40;
     homeButtonRect = { x: btnX - btnR, y: btnY - btnR, w: btnR * 2, h: btnR * 2 };
     
-    // Check hover state
+    // 检查悬停状态
     let mx = lastMouseX || 0;
     let my = lastMouseY || 0;
     let isHomeHover = (mx >= homeButtonRect.x && mx <= homeButtonRect.x + homeButtonRect.w &&
                        my >= homeButtonRect.y && my <= homeButtonRect.y + homeButtonRect.h);
     
-    // Button background on hover
+    // 悬停时的按钮背景
     if (isHomeHover) {
         ctx.fillStyle = 'rgba(255,255,255,0.15)';
         ctx.beginPath();
@@ -4471,7 +4548,7 @@ function drawHUD() {
     ctx.arc(btnX, btnY, btnR, 0, Math.PI * 2);
     ctx.stroke();
     
-    // Home icon (house shape) - filled white
+    // 主页图标（房屋形状）- 白色填充
     ctx.fillStyle = isHomeHover ? '#ffffff' : 'rgba(255,255,255,0.8)';
     ctx.beginPath();
     ctx.moveTo(btnX, btnY - 9);
@@ -4501,7 +4578,7 @@ function drawTouchControls() {
     for (let a of touchAreas) {
         let isPressed = touchPressed[a.id];
         
-        // Button background - brighter when pressed
+        // 按钮背景 - 按下时更亮
         if (isPressed) {
             ctx.fillStyle = 'rgba(255,255,255,0.6)';
         } else {
@@ -4512,7 +4589,7 @@ function drawTouchControls() {
         roundRect(ctx, a.x, a.y, a.w, a.h, 10);
         ctx.fill();
         
-        // Inner border (inset stroke effect)
+        // 内边框（内凹描边效果）
         let borderWidth = isPressed ? 3 : 2;
         let borderColor = isPressed ? 'rgba(255,255,255,0.95)' : 'rgba(255,255,255,0.6)';
         ctx.strokeStyle = borderColor;
@@ -4522,7 +4599,7 @@ function drawTouchControls() {
         roundRect(ctx, a.x + borderWidth, a.y + borderWidth, a.w - borderWidth * 2, a.h - borderWidth * 2, 8);
         ctx.stroke();
         
-        // Inner glow effect when pressed
+        // 按下时的内发光效果
         if (isPressed) {
             ctx.fillStyle = 'rgba(255,255,255,0.3)';
             ctx.beginPath();
@@ -4530,7 +4607,7 @@ function drawTouchControls() {
             ctx.fill();
         }
 
-        // Button label
+        // 按钮标签
         ctx.fillStyle = isPressed ? '#fff' : 'rgba(255,255,255,0.9)';
         ctx.font = isPressed ? 'bold 22px sans-serif' : '20px sans-serif';
         ctx.textAlign = 'center';
@@ -4547,14 +4624,14 @@ function formatTime(t) {
     return String(mins).padStart(2, '0') + ':' + String(secs).padStart(2, '0') + '.' + String(ms).padStart(2, '0');
 }
 
-// ==================== MINIMAP ====================
-// Pre-render static track onto offscreen canvas (drawn once per track generation)
+// ==================== 小地图 ====================
+// 将静态赛道预渲染到离屏画布（每次赛道生成时绘制一次）
 let minimapStaticCanvas = null;
 let minimapStaticCtx = null;
 const MINIMAP_SIZE = 140;
 
 function prerenderMinimapTrack() {
-    let dpr = window.devicePixelRatio || 1;
+    let dpr = dprEnabled ? (window.devicePixelRatio || 1) : 1;
     minimapStaticCanvas = document.createElement('canvas');
     minimapStaticCanvas.width = MINIMAP_SIZE * dpr;
     minimapStaticCanvas.height = MINIMAP_SIZE * dpr;
@@ -4567,10 +4644,10 @@ function prerenderMinimapTrack() {
     let cx = mb.cx, cy = mb.cy;
     let halfMap = MINIMAP_SIZE / 2;
 
-    // Clear
+    // 清除
     mctx.clearRect(0, 0, MINIMAP_SIZE, MINIMAP_SIZE);
 
-    // Draw main track - thicker lines for clarity
+    // 绘制主赛道 - 更粗的线条以清晰显示
     mctx.strokeStyle = 'rgba(255,255,255,0.45)';
     mctx.lineWidth = 3;
     mctx.beginPath();
@@ -4582,7 +4659,7 @@ function prerenderMinimapTrack() {
     }
     mctx.stroke();
 
-    // Draw branches - thicker
+    // 绘制分支 - 更粗
     mctx.strokeStyle = 'rgba(255,180,80,0.55)';
     mctx.lineWidth = 2.5;
     for (let bp of branchPaths) {
@@ -4596,7 +4673,7 @@ function prerenderMinimapTrack() {
         mctx.stroke();
     }
 
-    // Start marker (green)
+    // 起点标记（绿色）
     let spx = halfMap + (trackPath[0].x - cx) * scale;
     let spy = halfMap + (trackPath[0].y - cy) * scale;
     mctx.fillStyle = '#2ecc71';
@@ -4604,7 +4681,7 @@ function prerenderMinimapTrack() {
     mctx.arc(spx, spy, 5, 0, Math.PI * 2);
     mctx.fill();
 
-    // Finish marker (checkered)
+    // 终点标记（棋盘格）
     let fpx = halfMap + (trackPath[trackPath.length - 1].x - cx) * scale;
     let fpy = halfMap + (trackPath[trackPath.length - 1].y - cy) * scale;
     mctx.fillStyle = '#ffffff';
@@ -4622,14 +4699,14 @@ function drawMinimap() {
     let mapX = W - mapSize - 16;
     let mapY = 16;
 
-    // Background (transparent)
+    // 背景（透明）
     ctx.strokeStyle = 'rgba(255,255,255,0.15)';
     ctx.lineWidth = 1;
     ctx.beginPath();
     roundRect(ctx, mapX, mapY, mapSize, mapSize, 14);
     ctx.stroke();
 
-    // Blit pre-rendered static track (hi-res)
+    // 绘制预渲染的静态赛道（高分辨率）
     if (minimapStaticCanvas) {
         ctx.drawImage(minimapStaticCanvas, 0, 0, minimapStaticCanvas.width, minimapStaticCanvas.height, mapX, mapY, mapSize, mapSize);
     }
@@ -4639,7 +4716,7 @@ function drawMinimap() {
     let cx = mb.cx, cy = mb.cy;
     let halfMap = mapSize / 2;
 
-    // Player dot only
+    // 仅玩家点
     if (player) {
         let mpx = mapX + halfMap + (player.x - cx) * scale;
         let mpy = mapY + halfMap + (player.y - cy) * scale;
@@ -4648,7 +4725,7 @@ function drawMinimap() {
         ctx.arc(mpx, mpy, 4, 0, Math.PI * 2);
         ctx.fill();
 
-        // Direction indicator
+        // 方向指示器
         ctx.strokeStyle = COLORS.minimapPlayer;
         ctx.lineWidth = 2;
         ctx.beginPath();
@@ -4658,18 +4735,18 @@ function drawMinimap() {
     }
 }
 
-// ==================== MENU ====================
+// ==================== 菜单 ====================
 function drawMenu() {
     updateMenuParticles();
     
-    // Reset text baseline
+    // 重置文本基线
     ctx.textBaseline = 'alphabetic';
 
-    // Dark background
+    // 深色背景
     ctx.fillStyle = COLORS.menuBg;
     ctx.fillRect(0, 0, W, H);
 
-    // Vivid diagonal accent stripes
+    // 鲜艳的对角条纹装饰
     let time = performance.now() / 1000;
     ctx.save();
     ctx.globalAlpha = 0.06;
@@ -4688,7 +4765,7 @@ function drawMenu() {
     ctx.globalAlpha = 1;
     ctx.restore();
 
-    // Floating particles
+    // 浮动粒子
     for (let p of menuParticles) {
         let alpha = p.alpha * (0.7 + Math.sin(p.pulse) * 0.3);
         ctx.fillStyle = 'rgba(255,255,255,' + alpha + ')';
@@ -4697,41 +4774,21 @@ function drawMenu() {
         ctx.fill();
     }
 
-    // Title with accent glow
-    let titleY = H * 0.17;
+    // 带强调光晕的标题
+    let titleY = H * 0.15;
     ctx.textAlign = 'center';
 
-    // Title glow
+    // MINI 标题（第一行，较大）
     ctx.shadowColor = COLORS.accent;
     ctx.shadowBlur = 30;
-    ctx.font = 'bold 60px sans-serif';
+    ctx.font = '94px "Audiowide", sans-serif';
     ctx.fillStyle = '#ffffff';
-    ctx.fillText('迷你漫游', W / 2, titleY);
+    ctx.fillText('MINI', W / 2, titleY);
     ctx.shadowBlur = 0;
 
-    // Subtitle
-    ctx.font = '18px sans-serif';
-    ctx.fillStyle = COLORS.textSecondary;
-    ctx.fillText('A Mini Driving Game', W / 2, titleY + 38);
-
-    // Accent line under title
-    let lineW = 100;
-    let grad = ctx.createLinearGradient(W/2 - lineW/2, 0, W/2 + lineW/2, 0);
-    grad.addColorStop(0, COLORS.accent);
-    grad.addColorStop(0.5, COLORS.accentAlt);
-    grad.addColorStop(1, COLORS.accentGreen);
-    ctx.strokeStyle = grad;
-    ctx.lineWidth = 3;
-    ctx.lineCap = 'round';
-    ctx.beginPath();
-    ctx.moveTo(W / 2 - lineW / 2, titleY + 54);
-    ctx.lineTo(W / 2 + lineW / 2, titleY + 54);
-    ctx.stroke();
-    ctx.lineCap = 'butt';
-
-    // Small animated car
+    // 小型动画汽车（在MINI和Roaming之间滑动）
     let carIconX = W / 2 + Math.sin(time * 2) * 60;
-    let carIconY = titleY + 82;
+    let carIconY = titleY + 18;
     ctx.save();
     ctx.translate(carIconX, carIconY);
     ctx.rotate(-Math.PI / 2 + Math.sin(time * 3) * 0.12);
@@ -4743,26 +4800,34 @@ function drawMenu() {
     ctx.fillRect(-4, -8, 8, 5);
     ctx.restore();
 
-    // Single start button dimensions (for alignment reference)
+    // Roaming 标题（第二行，较小）
+    ctx.shadowColor = COLORS.accent;
+    ctx.shadowBlur = 30;
+    ctx.font = '46px "Audiowide", sans-serif';
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText('Roaming', W / 2, titleY + 60);
+    ctx.shadowBlur = 0;
+
+    // 单个开始按钮尺寸（用于对齐参考）
     let btnW = 280;
     let btnH = 72;
     let bx = W / 2 - btnW / 2;
     let by = H * 0.60;
 
-    // Seed input section
+    // 种子输入区域
     let seedInputY = H * 0.495;
     let seedInputW = 160;
     let seedInputH = 44;
-    let seedInputX = bx; // Align with start button left edge
+    let seedInputX = bx; // 与开始按钮左边缘对齐
     let seedLabelY = seedInputY - 10;
     
-    // Seed input label - centered above input
+    // 种子输入标签 - 居中于输入框上方
     ctx.font = '16px sans-serif';
     ctx.fillStyle = COLORS.textSecondary;
     ctx.textAlign = 'center';
     ctx.fillText('地图种子', seedInputX + seedInputW / 2, seedLabelY);
 
-    // Update seed input position
+    // 更新种子输入框位置
     let seedInput = document.getElementById('seedInput');
     if (seedInput) {
         seedInput.style.display = 'block';
@@ -4770,7 +4835,7 @@ function drawMenu() {
         seedInput.style.left = (seedInputX + seedInputW / 2) + 'px';
     }
 
-    // Draw seed input background/border on canvas (for visual consistency)
+    // 在画布上绘制种子输入背景/边框（保持视觉一致性）
     ctx.fillStyle = 'rgba(255,255,255,0.08)';
     ctx.strokeStyle = 'rgba(255,255,255,0.3)';
     ctx.lineWidth = 1;
@@ -4779,22 +4844,22 @@ function drawMenu() {
     ctx.fill();
     ctx.stroke();
 
-    // NPC toggle switch (right of seed input, aligned with start button right edge)
+    // NPC开关（种子输入右侧，与开始按钮右边缘对齐）
     let switchW = 100;
-    let switchH = seedInputH; // Same height as seed input
+    let switchH = seedInputH; // 与种子输入框同高
     let switchX = bx + btnW - switchW;
     let switchY = seedInputY;
     let switchLabelY = seedLabelY;
     
-    // NPC label - centered above switch
+    // NPC标签 - 居中于开关上方
     ctx.font = '16px sans-serif';
     ctx.fillStyle = COLORS.textSecondary;
     ctx.textAlign = 'center';
     ctx.fillText(showNPCs ? 'NPC：开' : 'NPC：关', switchX + switchW / 2, switchLabelY);
 
-    // Draw switch track (background) - pill shape with perfect circular ends
+    // 绘制开关轨道（背景）- 药丸形状，两端完美圆形
     let halfH = switchH / 2;
-    let isSwitchHover = (menuSelection === 1); // NPC switch is index 1
+    let isSwitchHover = (menuSelection === 1); // NPC开关索引为1
     ctx.fillStyle = showNPCs ? 'rgba(0,230,118,0.2)' : 'rgba(255,51,102,0.2)';
     ctx.beginPath();
     ctx.arc(switchX + halfH, switchY + halfH, halfH, Math.PI / 2, Math.PI * 1.5);
@@ -4812,7 +4877,7 @@ function drawMenu() {
     ctx.closePath();
     ctx.stroke();
 
-    // Draw switch thumb (circle)
+    // 绘制开关滑块（圆形）
     let thumbSize = switchH - 8;
     let thumbX = showNPCs ? switchX + switchW - thumbSize - 4 : switchX + 4;
     let thumbY = switchY + 4;
@@ -4821,7 +4886,7 @@ function drawMenu() {
     ctx.arc(thumbX + thumbSize / 2, thumbY + thumbSize / 2, thumbSize / 2, 0, Math.PI * 2);
     ctx.fill();
     
-    // Add glow effect to thumb
+    // 为滑块添加光晕效果
     ctx.shadowColor = showNPCs ? '#00e676' : '#ff3366';
     ctx.shadowBlur = 8;
     ctx.beginPath();
@@ -4829,10 +4894,10 @@ function drawMenu() {
     ctx.fill();
     ctx.shadowBlur = 0;
 
-    // Initialize button rects array - start button first, then NPC switch
+    // 初始化按钮矩形数组 - 开始按钮优先，然后是NPC开关
     menuButtonRects = [];
     
-    // Single start button (moved down) - hide on mobile when input is active
+    // 单个开始按钮（下移）- 移动端输入激活时隐藏
     if (!isMobileInputActive) {
         menuButtonRects.push({ x: bx, y: by, w: btnW, h: btnH, type: 'start' });
 
@@ -4865,11 +4930,11 @@ function drawMenu() {
         ctx.textBaseline = 'alphabetic';
     }
     
-    // Always add NPC switch to button rects (it's always visible)
+    // 始终将NPC开关添加到按钮矩形（始终可见）
     menuButtonRects.push({ x: switchX, y: switchY, w: switchW, h: switchH, type: 'npcSwitch' });
 }
 
-// ==================== COUNTDOWN ====================
+// ==================== 倒计时 ====================
 function drawCountdown() {
     if (countdownNumber > 0) {
         ctx.save();
@@ -4879,13 +4944,13 @@ function drawCountdown() {
         let scale = 1 + (countdownTimer % 1) * 0.2;
         let alpha = 1 - (countdownTimer % 1) * 0.3;
 
-        // Dark circle behind number
+        // 数字后的深色圆圈
         ctx.fillStyle = 'rgba(15,15,26,' + (alpha * 0.7) + ')';
         ctx.beginPath();
         ctx.arc(W / 2, H * 0.35, 60 * scale, 0, Math.PI * 2);
         ctx.fill();
 
-        // Accent ring
+        // 强调环
         ctx.strokeStyle = 'rgba(255,51,102,' + alpha + ')';
         ctx.lineWidth = 3;
         ctx.beginPath();
@@ -4918,9 +4983,9 @@ function drawCountdown() {
     }
 }
 
-// ==================== LOADING ====================
+// ==================== 加载中 ====================
 function drawLoading() {
-    // Hide seed input
+    // 隐藏种子输入框
     let seedInput = document.getElementById('seedInput');
     if (seedInput) seedInput.style.display = 'none';
     
@@ -4930,12 +4995,12 @@ function drawLoading() {
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     
-    // Title
+    // 标题
     ctx.font = 'bold 24px sans-serif';
     ctx.fillStyle = '#ffffff';
     ctx.fillText('加载中...', W / 2, H * 0.4);
     
-    // Progress bar background
+    // 进度条背景
     let barW = 300;
     let barH = 8;
     let barX = W / 2 - barW / 2;
@@ -4946,27 +5011,27 @@ function drawLoading() {
     roundRect(ctx, barX, barY, barW, barH, 4);
     ctx.fill();
     
-    // Progress bar fill
+    // 进度条填充
     ctx.fillStyle = COLORS.accent;
     ctx.beginPath();
     roundRect(ctx, barX, barY, barW * loadingProgress, barH, 4);
     ctx.fill();
     
-    // Progress text
+    // 进度文本
     ctx.font = '14px sans-serif';
     ctx.fillStyle = COLORS.textSecondary;
     ctx.fillText(Math.round(loadingProgress * 100) + '%', W / 2, barY + 30);
 }
 
-// ==================== RESULTS ====================
+// ==================== 结果 ====================
 function drawResults() {
-    // Dark overlay - semi-transparent so game shows through during coast
+    // 深色覆盖层 - 半透明以便滑行时显示游戏画面
     ctx.fillStyle = 'rgba(15,15,26,0.82)';
     ctx.fillRect(0, 0, W, H);
 
     ctx.textAlign = 'center';
 
-    // Title with glow
+    // 带光晕的标题
     ctx.shadowColor = COLORS.accent;
     ctx.shadowBlur = 20;
     ctx.font = 'bold 42px sans-serif';
@@ -4974,7 +5039,7 @@ function drawResults() {
     ctx.fillText('行程结束', W / 2, H * 0.14);
     ctx.shadowBlur = 0;
 
-    // Gradient line
+    // 渐变线
     let lineW = 80;
     let grad = ctx.createLinearGradient(W/2 - lineW/2, 0, W/2 + lineW/2, 0);
     grad.addColorStop(0, COLORS.accent);
@@ -4988,7 +5053,7 @@ function drawResults() {
     ctx.stroke();
     ctx.lineCap = 'butt';
 
-    // Stats
+    // 统计数据
     let statsY = H * 0.28;
     let rowH = 60;
     let stats = [
@@ -5026,7 +5091,7 @@ function drawResults() {
         ctx.fillText(s.value, W/2 + 145, y + 6);
     }
 
-    // Two buttons (removed report button)
+    // 两个按钮（移除了报告按钮）
     let btnW = 160, btnH = 50, btnGap = 20;
     let totalBtnW = btnW * 2 + btnGap;
     let btnY = statsY + stats.length * rowH + 25;
@@ -5066,7 +5131,7 @@ function drawResults() {
     }
     ctx.textBaseline = 'alphabetic';
 
-    // Map Seed display (below buttons, white color)
+    // 地图种子显示（按钮下方，白色）
     let seedY = btnY + btnH + 30;
     ctx.font = '13px sans-serif';
     ctx.fillStyle = '#ffffff';
@@ -5074,7 +5139,7 @@ function drawResults() {
     ctx.fillText('地图种子: ' + getMapSeed(), W / 2, seedY);
 }
 
-// ==================== GAME LOGIC ====================
+// ==================== 游戏逻辑 ====================
 function startGame() {
     gameState = 'loading';
     loadingProgress = 0;
@@ -5082,20 +5147,20 @@ function startGame() {
     showExitConfirm = false;
     gamePaused = false;
     
-    // Ensure audio context is resumed for new game
+    // 确保新游戏的音频上下文已恢复
     if (audioCtx && audioCtx.state === 'suspended') {
         audioCtx.resume();
     }
     audioSuspended = false;
     
-    // Set map seed from input or generate random
+    // 从输入设置地图种子或生成随机种子
     let seedInput = document.getElementById('seedInput');
     let seedValue = seedInput ? seedInput.value.trim() : '';
     console.log('Input seed value:', seedValue);
     setMapSeed(seedValue || null);
     console.log('Final seed:', currentSeed, 'State:', seedRandomState);
     
-    // Use setTimeout to allow loading screen to render
+    // 使用setTimeout允许加载画面渲染
     setTimeout(function() {
         loadingProgress = 0.2;
     }, 50);
@@ -5137,7 +5202,7 @@ function startGame() {
         placeCars();
         initParticlePool();
         
-        // Reset object pools for scenery
+        // 重置场景的对象池
         treePool.releaseAll();
         peoplePool.releaseAll();
         
@@ -5269,7 +5334,7 @@ function update(dt) {
                 let nx = dx / d;
                 let ny = dy / d;
                 
-                // Simple elastic push - push both cars apart linearly
+                // 简单弹性推力 - 线性推开两车
                 let pushDistance = (detectionRange - d) * 0.5;
                 pushDistance = Math.min(pushDistance, 3); // Max push per frame
                 
@@ -5281,7 +5346,7 @@ function update(dt) {
         }
     }
 
-    // Car-to-car collisions
+    // 车对车碰撞
     if (cars.length > 1 && player) {
         for (let i = 0; i < cars.length; i++) {
             let a = cars[i];
@@ -5293,7 +5358,7 @@ function update(dt) {
                 let bIsNear = b.isPlayer || ((b.x - playerX) ** 2 + (b.y - playerY) ** 2 < activeDistSq);
                 if (!bIsNear) continue;
                 
-                // Use simple circle collision for NPC-to-NPC, capsule collision for player involved
+                // NPC之间使用简单圆形碰撞，涉及玩家时使用胶囊碰撞
                 let useCapsule = a.isPlayer || b.isPlayer;
                 
                 let nx, ny, overlap;
@@ -5317,21 +5382,21 @@ function update(dt) {
                     overlap = minDist - d;
                 }
 
-                // Calculate collision direction relative to car A
+                // 计算相对于车辆A的碰撞方向
                 let aCos = Math.cos(a.direction);
                 let aSin = Math.sin(a.direction);
-                // Forward component: positive = front collision, negative = rear collision
+                // 前向分量：正数 = 前方碰撞，负数 = 后方碰撞
                 let forwardDot = nx * aCos + ny * aSin;
-                // Side component: absolute value indicates side collision
+                // 侧向分量：绝对值表示侧面碰撞
                 let sideDot = Math.abs(-nx * aSin + ny * aCos);
 
-                // Determine if this is a side collision (side component > forward component)
+                // 判断是否为侧面碰撞（侧向分量 > 前向分量）
                 let isSideCollision = sideDot > Math.abs(forwardDot);
 
-                // Strong separation - always push apart enough to prevent sticking
+                // 强力分离 - 始终推开足够距离以防止粘连
                 let posPushStrength = Math.max(overlap * 0.6, 2);
                 if (isSideCollision) {
-                    posPushStrength *= 0.25; // Reduce side position push to 1/4
+                    posPushStrength *= 0.25; // 将侧面位置推力减少到1/4
                 }
                 
                 a.x -= nx * posPushStrength;
@@ -5347,14 +5412,14 @@ function update(dt) {
                 let aDotN = avx * nx + avy * ny;
                 let bDotN = bvx * nx + bvy * ny;
 
-                // Always resolve - even if not approaching, push apart to unstick
+                // 始终解决 - 即使没有接近，也推开以脱离粘连
                 let relVel = aDotN - bDotN;
-                if (relVel > -0.5) { // resolve if approaching OR nearly stationary
-                    let restitution = 0.6; // bouncier
+                if (relVel > -0.5) { // 如果接近或几乎静止则解决
+                    let restitution = 0.6; // 更有弹性
                     let impulse = (1 + restitution) * Math.max(relVel, 0.5) / 2;
-                    impulse = clamp(impulse, 1.0, 4.0); // minimum bounce impulse
+                    impulse = clamp(impulse, 1.0, 4.0); // 最小反弹冲量
                     
-                    // Reduce velocity impulse for side collisions
+                    // 减少侧面碰撞的速度冲量
                     if (isSideCollision) {
                         impulse *= 0.25;
                     }
@@ -5369,14 +5434,14 @@ function update(dt) {
                     let newSpeedA = Math.sqrt(avx * avx + avy * avy);
                     let newSpeedB = Math.sqrt(bvx * bvx + bvy * bvy);
 
-                    // Blend direction more aggressively for visible bounce
+                    // 更积极地混合方向以产生可见的反弹
                     let blendFactor = 0.7;
                     a.direction = a.direction + angleDiff(a.direction, newDirA) * blendFactor;
                     b.direction = b.direction + angleDiff(b.direction, newDirB) * blendFactor;
                     a.direction = normalizeAngle(a.direction);
                     b.direction = normalizeAngle(b.direction);
 
-                    // Ensure minimum speed after collision so cars don't stop
+                    // 确保碰撞后最小速度以防止车辆停止
                     let minBounceSpeed = 2.0;
                     a.speed = lerp(Math.abs(a.speed), newSpeedA, 0.6) * (a.speed >= 0 ? 1 : -1);
                     b.speed = lerp(Math.abs(b.speed), newSpeedB, 0.6) * (b.speed >= 0 ? 1 : -1);
@@ -5410,23 +5475,24 @@ function update(dt) {
         }
     }
 
-    // Finish line
+    // 终点线
     checkFinishLine();
     updateFinishState();
     checkRaceEnd();
 
-    // Particles
+    // 粒子
     updateParticles();
 
-    // Camera
+    // 相机
     updateCamera();
 
-    // Update visibility manager for scenery
+    // 更新场景的可见性管理器
     visibilityManager.update(camera, performance.now());
 }
 
-// ==================== RENDER ====================
+// ==================== 渲染 ====================
 function render() {
+    applySmoothing();
     ctx.clearRect(0, 0, W, H);
 
     if (gameState === 'menu') {
@@ -5439,31 +5505,31 @@ function render() {
         return;
     }
 
-    // Game rendering - Canvas map system
+    // 游戏渲染 - 画布地图系统
     drawGrass();
-    // Draw all road edges first (under the road surface) for proper layering
+    // 首先绘制所有道路边缘（在道路表面下方）以实现正确的分层
     drawAllRoadEdges();
-    // Then draw road surfaces (they will cover the inner parts of the edges)
+    // 然后绘制道路表面（它们会覆盖边缘的内部部分）
     drawBranchSurfaces();
     drawTrackSurface();
     drawCenterLine();
 
-    // Start/finish lines
+    // 起点/终点线
     drawStartFinishLine(0);
     drawStartFinishLine(trackPath.length - 1);
 
-    // Draw scenery (trees, people) on top of roads
+    // 在道路上绘制场景（树木、人物）
     drawScenery();
 
-    // Draw particles behind cars
+    // 在车辆后方绘制粒子
     drawParticles();
 
-    // Sort cars by screen Y for depth - use in-place sort with pre-allocated array
-    // Only sort if cars array changed (optimization)
+    // 按屏幕Y深度排序车辆 - 使用原地排序和预分配数组
+    // 仅在车辆数组变化时排序（优化）
     if (!window.sortedCars || window.sortedCars.length !== cars.length) {
         window.sortedCars = [...cars];
     }
-    // Update references in case cars array changed
+    // 更新引用以防车辆数组变化
     for (let i = 0; i < cars.length; i++) {
         window.sortedCars[i] = cars[i];
     }
@@ -5475,7 +5541,7 @@ function render() {
         return say - sby;
     });
     for (let car of window.sortedCars) {
-        // Only draw NPC cars if showNPCs is true, always draw player
+        // 仅在showNPCs为true时绘制NPC车辆，始终绘制玩家
         if (car.isPlayer || showNPCs) {
             drawCar(car);
         }
@@ -5501,11 +5567,11 @@ function render() {
 }
 
 function drawExitConfirm() {
-    // Dark overlay
+    // 深色覆盖层
     ctx.fillStyle = 'rgba(0,0,0,0.7)';
     ctx.fillRect(0, 0, W, H);
 
-    // Dialog box
+    // 对话框
     let boxW = 280;
     let boxH = 140;
     let boxX = W / 2 - boxW / 2;
@@ -5519,24 +5585,24 @@ function drawExitConfirm() {
     ctx.fill();
     ctx.stroke();
 
-    // Title
+    // 标题
     ctx.fillStyle = COLORS.textPrimary;
     ctx.font = 'bold 18px sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText('结束当前比赛?', W / 2, boxY + 35);
 
-    // Buttons
+    // 按钮
     let btnW = 100, btnH = 40;
     let btnY = boxY + boxH - 55;
     let btn1X = W / 2 - btnW - 15;
     let btn2X = W / 2 + 15;
 
-    // Check hover state for buttons (using menuSelection for simplicity)
+    // 检查按钮悬停状态（为简单起见使用menuSelection）
     let isCancelHover = menuSelection === 0;
     let isConfirmHover = menuSelection === 1;
 
-    // Cancel button
+    // 取消按钮
     ctx.fillStyle = isCancelHover ? 'rgba(255,255,255,0.2)' : 'rgba(255,255,255,0.1)';
     ctx.strokeStyle = isCancelHover ? 'rgba(255,255,255,0.5)' : 'rgba(255,255,255,0.3)';
     ctx.lineWidth = isCancelHover ? 2 : 1;
@@ -5548,7 +5614,7 @@ function drawExitConfirm() {
     ctx.font = 'bold 14px sans-serif';
     ctx.fillText('取消', btn1X + btnW / 2, btnY + btnH / 2);
 
-    // Confirm button
+    // 确认按钮
     ctx.fillStyle = isConfirmHover ? 'rgba(255,51,102,0.2)' : 'rgba(255,51,102,0.1)';
     ctx.strokeStyle = isConfirmHover ? COLORS.accent : 'rgba(255,51,102,0.6)';
     ctx.lineWidth = isConfirmHover ? 2 : 1;
@@ -5562,7 +5628,7 @@ function drawExitConfirm() {
     ctx.textBaseline = 'alphabetic';
 }
 
-// ==================== GAME LOOP ====================
+// ==================== 游戏循环 ====================
 let lastTime = 0;
 let accumulator = 0;
 const FIXED_DT = 1 / 60;
@@ -5572,7 +5638,7 @@ function gameLoop(timestamp) {
     let elapsed = (timestamp - lastTime) / 1000;
     lastTime = timestamp;
 
-    // Cap delta to prevent spiral of death
+    // 限制增量时间以防止死亡螺旋
     if (elapsed > 0.1) elapsed = 0.1;
 
     let updateStart = performance.now();
@@ -5592,7 +5658,7 @@ function gameLoop(timestamp) {
     requestAnimationFrame(gameLoop);
 }
 
-// ==================== INIT ====================
+// ==================== 初始化 ====================
 function init() {
     resize();
     initMenuParticles();
