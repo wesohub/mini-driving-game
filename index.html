@@ -5228,16 +5228,21 @@ function update(dt) {
             lastCountdownBeep = countdownNumber;
             playCountdownBeep(false);
         }
-        if (countdownNumber === 0 && lastCountdownBeep !== 0) {
-            lastCountdownBeep = 0;
-            playCountdownBeep(true); // GO sound
-        }
         if (countdownTimer >= 1) {
             countdownTimer -= 1;
             countdownNumber--;
             if (countdownNumber < -1) {
                 gameState = 'racing';
             }
+        }
+        // GO音效：当countdownNumber变为0时播放
+        if (countdownNumber === 0 && lastCountdownBeep !== 0) {
+            lastCountdownBeep = 0;
+            playCountdownBeep(true); // GO sound
+        }
+        // 提前进入racing状态（不影响倒计时显示和音效）
+        if (countdownNumber < 1) {
+            gameState = 'racing';
         }
         updateCamera();
         
@@ -5250,6 +5255,11 @@ function update(dt) {
     if (gameState !== 'racing') return;
 
     raceTime += dt;
+
+    // 在 racing 状态下继续更新倒计时计时器（用于 GO 的淡出）
+    if (countdownNumber <= 0 && countdownTimer < 1) {
+        countdownTimer += dt;
+    }
 
     // Dynamic NPC spawning/despawning - MUST be before NPC updates
     // so newly spawned NPCs are included in collision detection
@@ -5534,7 +5544,8 @@ function render() {
     drawHUD();
     drawMinimap();
 
-    if (gameState === 'countdown') {
+    // 在倒计时或racing状态下（GO还在显示时）绘制倒计时
+    if (gameState === 'countdown' || (gameState === 'racing' && countdownNumber <= 0 && countdownTimer < 1)) {
         drawCountdown();
     }
 
