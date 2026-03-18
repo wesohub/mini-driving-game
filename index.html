@@ -4157,32 +4157,15 @@ function updateMenuParticles() {
 }
 
 // ==================== CAMERA ====================
-// 镜头旋转相关参数
-const CAMERA_ROTATION_SENSITIVITY = 0.1;  // 镜头旋转灵敏度
-const CAMERA_ROTATION_MAX_ANGLE = 0.075;    // 最大旋转角度
-const CAMERA_ROTATION_RETURN_SPEED = 0.1; // 镜头回正速度
 
 function updateCamera() {
     if (!player) return;
 
-    // 基础角度：跟随玩家车辆方向
-    let baseAngle = -player.direction + Math.PI * 1.5;
-    
-    // 根据左右键输入计算目标旋转角度
-    let inputLeft = keys['ArrowLeft'] || keys['KeyA'] || touchControls.left;
-    let inputRight = keys['ArrowRight'] || keys['KeyD'] || touchControls.right;
-    let targetRotationOffset = 0;
-    if (inputLeft) targetRotationOffset = -CAMERA_ROTATION_MAX_ANGLE;
-    if (inputRight) targetRotationOffset = CAMERA_ROTATION_MAX_ANGLE;
-    
-    // 平滑过渡到目标旋转角度
-    camera.rotationOffset += (targetRotationOffset - camera.rotationOffset) * CAMERA_ROTATION_RETURN_SPEED;
-    
-    // 最终相机角度 = 基础角度 + 旋转偏移
-    let targetAngle = baseAngle + camera.rotationOffset;
+    // 镜头角度只跟随玩家车辆方向，不再响应左右键旋转
+    let targetAngle = -player.direction + Math.PI * 1.5;
 
     let angleDelta = angleDiff(camera.angle, targetAngle);
-    camera.angle += angleDelta * CAMERA_ROTATION_SENSITIVITY;
+    camera.angle += angleDelta * 0.12;
 
     // 为worldToScreen预计算三角函数值
     cameraTransform.cos = Math.cos(camera.angle);
@@ -4375,7 +4358,7 @@ function drawCar(car) {
 
     // Shadow - 根据光线照射角度连续计算阴影位置
     const SUN_ANGLE = Math.PI / 4; // 阳光从世界坐标系的45度方向照射
-    const SHADOW_DISTANCE = 6; // 阴影距离
+    const SHADOW_DISTANCE = 5; // 阴影距离
     
     // 计算车身相对于阳光的角度
     let angleDiff = car.visualAngle - SUN_ANGLE;
@@ -4775,7 +4758,7 @@ function drawMenu() {
     }
 
     // 带强调光晕的标题
-    let titleY = H * 0.15;
+    let titleY = H * 0.2;
     ctx.textAlign = 'center';
 
     // MINI 标题（第一行，较大）
