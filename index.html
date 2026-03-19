@@ -931,19 +931,41 @@ window.addEventListener('keyup', function(e) {
 
 // 触摸控制
 let touchAreas = [];
+let touchHitAreas = []; // 更大的触摸区域（用于容错）
 let touchPressed = { left: false, right: false, up: false, down: false };
 let activeTouches = {}; // Track active touches by identifier
 function setupTouchAreas() {
-    const bw = 70, bh = 65;
+    const bw = 70, bh = 65; // 外观尺寸（保持不变）
+    const hitBw = 95, hitBh = 90; // 触摸区域尺寸（更大，增加容错）
     const margin = 32;
     const bottomOffset = 100;
-    const btnGap = 5;
+    const btnGap = 20; // 增大按键间距
+    
     // 左侧：左/右（转向），右侧：上/下（油门/刹车）
+    // 外观区域（用于绘制）
     touchAreas = [
         { id: 'up', x: W - bw - margin, y: H - bh * 2 - margin - bottomOffset, w: bw, h: bh },
         { id: 'down', x: W - bw - margin, y: H - bh - margin - bottomOffset + btnGap, w: bw, h: bh },
         { id: 'left', x: margin, y: H - bh - margin - bottomOffset + btnGap, w: bw, h: bh },
         { id: 'right', x: margin + bw + btnGap, y: H - bh - margin - bottomOffset + btnGap, w: bw, h: bh }
+    ];
+    
+    // 触摸区域（更大的不可见区域，用于检测触摸）
+    // 计算每个按键的中心点，然后让触摸区域以该中心点对齐
+    let upCenterX = (W - bw - margin) + bw / 2;
+    let upCenterY = (H - bh * 2 - margin - bottomOffset) + bh / 2;
+    let downCenterX = (W - bw - margin) + bw / 2;
+    let downCenterY = (H - bh - margin - bottomOffset + btnGap) + bh / 2;
+    let leftCenterX = margin + bw / 2;
+    let leftCenterY = (H - bh - margin - bottomOffset + btnGap) + bh / 2;
+    let rightCenterX = (margin + bw + btnGap) + bw / 2;
+    let rightCenterY = (H - bh - margin - bottomOffset + btnGap) + bh / 2;
+    
+    touchHitAreas = [
+        { id: 'up', x: upCenterX - hitBw / 2, y: upCenterY - hitBh / 2, w: hitBw, h: hitBh },
+        { id: 'down', x: downCenterX - hitBw / 2, y: downCenterY - hitBh / 2, w: hitBw, h: hitBh },
+        { id: 'left', x: leftCenterX - hitBw / 2, y: leftCenterY - hitBh / 2, w: hitBw, h: hitBh },
+        { id: 'right', x: rightCenterX - hitBw / 2, y: rightCenterY - hitBh / 2, w: hitBw, h: hitBh }
     ];
 }
 setupTouchAreas();
@@ -1087,14 +1109,140 @@ function recalculateTouchState() {
     // 重新设置触摸区域以适应可能的窗口调整
     setupTouchAreas();
     
-    // 检查每个活动触摸
+    // 检测每个活动触摸
     for (let id in activeTouches) {
         let touch = activeTouches[id];
         let tx = touch.x, ty = touch.y;
-        for (let a of touchAreas) {
+        
+        // 检查触摸是否在任何触摸区域内
+        for (let a of touchHitAreas) {
             if (tx >= a.x && tx <= a.x + a.w && ty >= a.y && ty <= a.y + a.h) {
                 touchControls[a.id] = true;
                 touchPressed[a.id] = true;
+            }
+        }
+    }
+    
+    // 防干扰处理：如果同时按下左右键，判断触摸点相对于两个按键中心的位置
+    if (touchControls.left && touchControls.right) {
+        let leftArea = touchAreas.find(a => a.id === 'left');
+        let rightArea = touchAreas.find(a => a.id === 'right');
+        let leftHit = touchHitAreas.find(a => a.id === 'left');
+        let rightHit = touchHitAreas.find(a => a.id === 'right');
+        
+        if (leftArea && rightArea && leftHit && rightHit) {
+            // 使用触摸区域的中心点（更准确，因为触摸区域与外观区域完全居中对齐）
+            let leftCenterX = leftHit.x + leftHit.w / 2;
+            let rightCenterX = rightHit.x + rightHit.w / 2;
+            
+            // 找到触发左右键的触摸点
+            let leftTriggerTouch = null;
+            let rightTriggerTouch = null;
+            let minLeftDist = Infinity;
+            let minRightDist = Infinity;
+            
+            for (let id in activeTouches) {
+                let t = activeTouches[id];
+                
+                // 检查该触摸是否在左键的触摸区域内
+                if (t.x >= leftHit.x && t.x <= leftHit.x + leftHit.w && 
+                    t.y >= leftHit.y && t.y <= leftHit.y + leftHit.h) {
+                    let dist = Math.abs(t.x - leftCenterX);
+                    if (dist < minLeftDist) {
+                        minLeftDist = dist;
+                        leftTriggerTouch = t;
+                    }
+                }
+                
+                // 检查该触摸是否在右键的触摸区域内
+                if (t.x >= rightHit.x && t.x <= rightHit.x + rightHit.w && 
+                    t.y >= rightHit.y && t.y <= rightHit.y + rightHit.h) {
+                    let dist = Math.abs(t.x - rightCenterX);
+                    if (dist < minRightDist) {
+                        minRightDist = dist;
+                        rightTriggerTouch = t;
+                    }
+                }
+            }
+            
+            // 根据触摸点位置判断应该触发哪个键
+            if (leftTriggerTouch && rightTriggerTouch) {
+                // 比较两个触发触摸相对于各自按键中心的距离
+                if (minLeftDist < minRightDist) {
+                    touchControls.right = false;
+                    touchPressed.right = false;
+                } else {
+                    touchControls.left = false;
+                    touchPressed.left = false;
+                }
+            } else if (leftTriggerTouch && !rightTriggerTouch) {
+                touchControls.right = false;
+                touchPressed.right = false;
+            } else if (!leftTriggerTouch && rightTriggerTouch) {
+                touchControls.left = false;
+                touchPressed.left = false;
+            }
+        }
+    }
+    
+    // 防干扰处理：如果同时按下上下键，判断触摸点相对于两个按键中心的位置
+    if (touchControls.up && touchControls.down) {
+        let upArea = touchAreas.find(a => a.id === 'up');
+        let downArea = touchAreas.find(a => a.id === 'down');
+        let upHit = touchHitAreas.find(a => a.id === 'up');
+        let downHit = touchHitAreas.find(a => a.id === 'down');
+        
+        if (upArea && downArea && upHit && downHit) {
+            // 使用触摸区域的中心点（更准确，因为触摸区域与外观区域完全居中对齐）
+            let upCenterY = upHit.y + upHit.h / 2;
+            let downCenterY = downHit.y + downHit.h / 2;
+            
+            // 找到触发上下键的触摸点
+            let upTriggerTouch = null;
+            let downTriggerTouch = null;
+            let minUpDist = Infinity;
+            let minDownDist = Infinity;
+            
+            for (let id in activeTouches) {
+                let t = activeTouches[id];
+                
+                // 检查该触摸是否在 UP 键的触摸区域内
+                if (t.x >= upHit.x && t.x <= upHit.x + upHit.w && 
+                    t.y >= upHit.y && t.y <= upHit.y + upHit.h) {
+                    let dist = Math.abs(t.y - upCenterY);
+                    if (dist < minUpDist) {
+                        minUpDist = dist;
+                        upTriggerTouch = t;
+                    }
+                }
+                
+                // 检查该触摸是否在 DOWN 键的触摸区域内
+                if (t.x >= downHit.x && t.x <= downHit.x + downHit.w && 
+                    t.y >= downHit.y && t.y <= downHit.y + downHit.h) {
+                    let dist = Math.abs(t.y - downCenterY);
+                    if (dist < minDownDist) {
+                        minDownDist = dist;
+                        downTriggerTouch = t;
+                    }
+                }
+            }
+            
+            // 根据触摸点位置判断应该触发哪个键
+            if (upTriggerTouch && downTriggerTouch) {
+                // 比较两个触发触摸相对于各自按键中心的距离
+                if (minUpDist < minDownDist) {
+                    touchControls.down = false;
+                    touchPressed.down = false;
+                } else {
+                    touchControls.up = false;
+                    touchPressed.up = false;
+                }
+            } else if (upTriggerTouch && !downTriggerTouch) {
+                touchControls.down = false;
+                touchPressed.down = false;
+            } else if (!upTriggerTouch && downTriggerTouch) {
+                touchControls.up = false;
+                touchPressed.up = false;
             }
         }
     }
@@ -1106,9 +1254,10 @@ function handleTouches(touches) {
     touchControls.up = false;
     touchControls.down = false;
     touchPressed = { left: false, right: false, up: false, down: false };
+    setupTouchAreas();
     for (let t = 0; t < touches.length; t++) {
         let tx = touches[t].clientX, ty = touches[t].clientY;
-        for (let a of touchAreas) {
+        for (let a of touchHitAreas) {
             if (tx >= a.x && tx <= a.x + a.w && ty >= a.y && ty <= a.y + a.h) {
                 touchControls[a.id] = true;
                 touchPressed[a.id] = true;
@@ -2904,6 +3053,28 @@ function getTrackDistance(x, y, idx) {
     return dx * p.nx + dy * p.ny;
 }
 
+// 检查点是否在赛道的有效范围内（不在起点前方或终点后方）
+function isWithinTrackBounds(x, y, idx) {
+    let p = trackPath[idx];
+    
+    // 计算点到最近点的向量
+    let dx = x - p.x;
+    let dy = y - p.y;
+    
+    // 计算沿赛道方向的投影（使用方向向量）
+    let cosDir = Math.cos(p.dir);
+    let sinDir = Math.sin(p.dir);
+    let projection = dx * cosDir + dy * sinDir;
+    
+    // 检查起点：如果是第一个点，投影为负表示在起点前方
+    if (idx === 0 && projection < 0) return false;
+    
+    // 检查终点：如果是最后一个点，投影为正表示在终点后方
+    if (idx === trackPath.length - 1 && projection > 0) return false;
+    
+    return true;
+}
+
 // 检查汽车的物理碰撞框是否在道路表面上
 function isCarOnRoadSurface(car) {
     // 定义汽车的道路检测碰撞框（较窄的宽度）
@@ -2930,7 +3101,8 @@ function isCarOnRoadSurface(car) {
         // 使用赛道距离检查主道路
         let closest = findClosestTrackPoint(corner.x, corner.y);
         let trackDist = Math.abs(getTrackDistance(corner.x, corner.y, closest.index));
-        if (trackDist < TRACK_WIDTH / 2 - roadMargin) {
+        // 同时检查垂直距离和赛道边界（起点前方/终点后方）
+        if (trackDist < TRACK_WIDTH / 2 - roadMargin && isWithinTrackBounds(corner.x, corner.y, closest.index)) {
             return true;
         }
         
@@ -2947,7 +3119,8 @@ function isCarOnRoadSurface(car) {
 function isOnTrack(x, y) {
     let closest = findClosestTrackPoint(x, y);
     let trackDist = Math.abs(getTrackDistance(x, y, closest.index));
-    if (trackDist < TRACK_WIDTH / 2) return true;
+    // 同时检查垂直距离和赛道边界（起点前方/终点后方）
+    if (trackDist < TRACK_WIDTH / 2 && isWithinTrackBounds(x, y, closest.index)) return true;
     // 检查分支路径
     return isOnBranch(x, y);
 }
@@ -2955,42 +3128,42 @@ function isOnTrack(x, y) {
 // ==================== 汽车工厂 ====================
 function createCar(color, isPlayer) {
     return {
-        x: 0, y: 0,
-        vx: 0, vy: 0,
-        speed: 0,
-        direction: 0,
-        visualAngle: 0,
-        steeringInput: 0,
-        width: CAR_WIDTH,
-        length: CAR_LENGTH,
-        color: color,
-        isPlayer: isPlayer,
-        isNPC: !isPlayer,
-        maxSpeed: isPlayer ? 10.0 : randRange(5.5, 11.0),
-        acceleration: isPlayer ? 0.08 : 0.25,
-        braking: 0.10,
-        turnRate: isPlayer ? 0.05 : 0.05,
-        friction: 0.995,
-        offTrackFriction: 0.98,
-        currentPathIdx: 0,
-        lastCheckpoint: 0,
-        finished: false,
-        finishTime: 0,
-        totalProgress: 0,
-        lastTireScreech: 0,
-        collisionCooldown: 0,
-        collisionPenalty: 0,
-        avoidPlayer: Math.random() < 0.3,
-        npcSteerInput: 0,
-        laneOffset: 0,
-        targetLaneOffset: 0,
-        skill: Math.random(),
-        blockedTimer: 0,
-        overtakeState: 'none',
-        overtakeTargetLane: 0,
-        overtakeTimer: 0,
-        targetX: 0, targetY: 0,
-        positionSmoothness: 0.7
+        x: 0, y: 0,                          // 位置坐标
+        vx: 0, vy: 0,                        // 速度向量
+        speed: 0,                            // 当前速度
+        direction: 0,                        // 行驶方向（弧度）
+        visualAngle: 0,                      // 视觉角度（用于平滑渲染）
+        steeringInput: 0,                    // 转向输入（-1到1）
+        width: CAR_WIDTH,                    // 车宽
+        length: CAR_LENGTH,                  // 车长
+        color: color,                        // 车身颜色
+        isPlayer: isPlayer,                  // 是否为玩家车辆
+        isNPC: !isPlayer,                    // 是否为NPC车辆
+        maxSpeed: isPlayer ? 10.0 : randRange(5.5, 11.0),  // 最大速度
+        acceleration: isPlayer ? 0.075 : 0.15,                // 加速度
+        braking: 0.10,                       // 刹车力度
+        turnRate: isPlayer ? 0.05 : 0.05,    // 转向速率
+        friction: 0.995,                     // 地面摩擦力（赛道内）
+        offTrackFriction: 0.98,              // 地面摩擦力（赛道外）
+        currentPathIdx: 0,                   // 当前所在路径点索引
+        lastCheckpoint: 0,                   // 最后通过的检查点
+        finished: false,                     // 是否完成比赛
+        finishTime: 0,                       // 完成时间
+        totalProgress: 0,                    // 总进度
+        lastTireScreech: 0,                  // 上次轮胎摩擦音效时间
+        collisionCooldown: 0,                // 碰撞冷却时间
+        collisionPenalty: 0,                 // 碰撞惩罚（减速效果）
+        avoidPlayer: Math.random() < 0.3,    // 是否避让玩家
+        npcSteerInput: 0,                    // NPC转向输入
+        laneOffset: 0,                       // 当前车道偏移
+        targetLaneOffset: 0,                 // 目标车道偏移
+        skill: Math.random(),                // NPC驾驶技能（0-1）
+        blockedTimer: 0,                     // 被阻挡计时器
+        overtakeState: 'none',               // 超车状态
+        overtakeTargetLane: 0,               // 超车目标车道
+        overtakeTimer: 0,                    // 超车计时器
+        targetX: 0, targetY: 0,              // 目标位置
+        positionSmoothness: 0.7              // 位置平滑系数
     };
 }
 
@@ -3230,25 +3403,20 @@ function updatePlayer(car, dt) {
     let inputLeft = keys['ArrowLeft'] || keys['KeyA'] || touchControls.left;
     let inputRight = keys['ArrowRight'] || keys['KeyD'] || touchControls.right;
 
-    // 完成后：允许控制但逐渐减速停止
+    // 完成后：0.75秒内速度逐渐降为0
     let effectiveMaxSpeed = car.maxSpeed;
     let postFinishDeceleration = false;
     if (car.finished) {
         let elapsed = raceTime - car.finishTime;
-        // 完成后立即强力减速
-        if (elapsed > 0.5) {
-            let brakeFactor = clamp((elapsed - 0.5) / 2, 0, 1);
-            effectiveMaxSpeed = car.maxSpeed * (1 - brakeFactor * 0.95);
-            if (!inputUp) {
-                car.speed *= lerp(0.97, 0.70, brakeFactor); // 更强的减速
-                postFinishDeceleration = true;
-            }
+        if (!car.finishSpeed) {
+            car.finishSpeed = car.speed;
+            car.finishDirection = car.direction;
         }
-        if (elapsed > 2.5) {
-            car.speed *= 0.65; // 更快的减速
-            postFinishDeceleration = true;
-            if (Math.abs(car.speed) < 0.05) car.speed = 0;
-        }
+        let decelFactor = clamp(1 - elapsed / 0.75, 0, 1);
+        car.speed = car.finishSpeed * decelFactor;
+        car.turnRate = 0.05 * decelFactor;
+        postFinishDeceleration = true;
+        if (Math.abs(car.speed) < 0.05) car.speed = 0;
     }
 
     // 碰撞惩罚的加速：碰撞后恢复较慢
@@ -3322,7 +3490,7 @@ function updatePlayer(car, dt) {
     let closest = findClosestTrackPoint(car.x, car.y);
     car.currentPathIdx = closest.index;
 
-    // 离开赛道的摩擦 + 灰尘 - 检查汽车是否在道路表面上
+    // 离开赛道的摩擦 + 灰尘
     let onTrack = isCarOnRoadSurface(car);
     
     if (!onTrack) {
@@ -3349,37 +3517,29 @@ function updateNPC(car, dt, isPlayerNearby) {
     
     if (car.finished) {
         let elapsed = raceTime - car.finishTime;
-        
-        if (elapsed < 1.5) {
-            let brakeFactor = elapsed / 1.5;
-            car.speed *= lerp(0.94, 0.70, brakeFactor);
-        } else {
-            car.speed *= 0.65;
+        if (!car.finishSpeed) {
+            car.finishSpeed = car.speed;
+            car.finishDirection = car.direction;
         }
+        let decelFactor = clamp(1 - elapsed / 1.0, 0, 1);
+        car.speed = car.finishSpeed * decelFactor;
+        car.direction = car.finishDirection;
         
-        if (Math.abs(car.speed) < 0.1) {
+        if (Math.abs(car.speed) < 0.05) {
             car.speed = 0;
         } else {
             car.x += Math.cos(car.direction) * car.speed;
             car.y += Math.sin(car.direction) * car.speed;
         }
         
-        let finishP = trackPath[trackPath.length - 1];
-        let dx = car.x - finishP.x;
-        let dy = car.y - finishP.y;
-        let dist = Math.sqrt(dx * dx + dy * dy);
-        
-        if (dist > 300) {
-            let angle = Math.atan2(dy, dx);
-            let targetX = finishP.x + Math.cos(angle) * 250;
-            let targetY = finishP.y + Math.sin(angle) * 250;
-            car.x += (targetX - car.x) * 0.05;
-            car.y += (targetY - car.y) * 0.05;
+        // 撞线后赛道外检测和灰尘
+        if (isPlayerNearby && Math.abs(car.speed) > 1) {
+            let onTrack = isCarOnRoadSurface(car);
+            if (!onTrack && Math.random() < 0.5) {
+                spawnDust(car.x, car.y, car.speed, car.direction);
+            }
         }
-        
-        if (car.speed === 0) {
-            return;
-        }
+        return;
     }
     
     if (!isPlayerNearby) {
@@ -3478,6 +3638,9 @@ function updateNPC(car, dt, isPlayerNearby) {
 
     if (!onTrack) {
         car.speed *= car.offTrackFriction;
+        if (Math.abs(car.speed) > 1 && Math.random() < 0.5) {
+            spawnDust(car.x, car.y, car.speed, car.direction);
+        }
     }
 
     let halfW = TRACK_WIDTH / 2;
@@ -4074,22 +4237,39 @@ function spawnSpark(x, y) {
     particleCounts.total++;
 }
 
+// 全局灰尘冷却计时器
+let lastDustTime = 0;
+
 function spawnDust(x, y, speed, dir) {
-    if (particleCounts.dust >= MAX_DUST) return;
-    let p = allocateParticle();
-    if (!p) return;
-    p.active = true;
-    p.x = x - Math.cos(dir) * CAR_LENGTH * 0.3;
-    p.y = y - Math.sin(dir) * CAR_LENGTH * 0.3;
-    p.vx = randRange(-1.5, 1.5) - Math.cos(dir) * 1;
-    p.vy = randRange(-1.5, 1.5) - Math.sin(dir) * 1;
-    p.life = 1;
-    p.decay = randRange(0.02, 0.04);
-    p.size = randRange(4, 12);
-    p.color = COLORS.dust[randInt(0, COLORS.dust.length - 1)];
-    p.type = 'dust';
-    particleCounts.dust++;
-    particleCounts.total++;
+    let now = performance.now();
+    // 根据速度计算冷却间隔：速度越快，间隔越短
+    // 速度1时间隔150ms，速度10时间隔30ms，最少20ms
+    let cooldown = Math.max(20, 150 - speed * 12);
+    
+    if (now - lastDustTime < cooldown) return;
+    lastDustTime = now;
+    
+    // 根据速度计算粒子数量：速度越快，粒子越多
+    // 基础1个，速度每增加2个单位多1个粒子，最多5个
+    let particleCount = Math.min(5, Math.max(1, Math.floor(speed / 2)));
+    
+    for (let i = 0; i < particleCount; i++) {
+        if (particleCounts.dust >= MAX_DUST) return;
+        let p = allocateParticle();
+        if (!p) return;
+        p.active = true;
+        p.x = x - Math.cos(dir) * CAR_LENGTH * 0.3 + randRange(-3, 3);
+        p.y = y - Math.sin(dir) * CAR_LENGTH * 0.3 + randRange(-3, 3);
+        p.vx = randRange(-1.5, 1.5) - Math.cos(dir) * 1;
+        p.vy = randRange(-1.5, 1.5) - Math.sin(dir) * 1;
+        p.life = 1;
+        p.decay = randRange(0.02, 0.04);
+        p.size = randRange(4, 12);
+        p.color = COLORS.dust[randInt(0, COLORS.dust.length - 1)];
+        p.type = 'dust';
+        particleCounts.dust++;
+        particleCounts.total++;
+    }
 }
 
 function updateParticles() {
@@ -4571,16 +4751,6 @@ function drawTouchControls() {
         ctx.beginPath();
         roundRect(ctx, a.x, a.y, a.w, a.h, 10);
         ctx.fill();
-        
-        // 内边框（内凹描边效果）
-        let borderWidth = isPressed ? 3 : 2;
-        let borderColor = isPressed ? 'rgba(255,255,255,0.95)' : 'rgba(255,255,255,0.6)';
-        ctx.strokeStyle = borderColor;
-        ctx.lineWidth = borderWidth;
-        
-        ctx.beginPath();
-        roundRect(ctx, a.x + borderWidth, a.y + borderWidth, a.w - borderWidth * 2, a.h - borderWidth * 2, 8);
-        ctx.stroke();
         
         // 按下时的内发光效果
         if (isPressed) {
